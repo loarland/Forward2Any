@@ -1,0 +1,71 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>投递详情 #{{.Item.ID}}</h1>
+    <div class="sub">
+      <span class="tag {{.Item.Status}}">{{statusText .Item.Status}}</span>
+      <span class="mono">trace {{.Item.TraceID}}</span>
+    </div>
+  </div>
+  <a class="btn" href="/deliveries">返回</a>
+</div>
+
+<div class="panel">
+  <h2>投递信息</h2>
+  <table>
+    <tbody>
+      <tr><th>规则</th><td>{{if .Item.RuleName}}{{.Item.RuleName}}{{else}}—{{end}}</td></tr>
+      <tr><th>接收源</th><td>{{if .Item.InSourceName}}{{.Item.InSourceName}}{{else}}—{{end}}</td></tr>
+      <tr><th>目标源</th><td>{{if .Target}}{{.Target.Name}} <span class="muted">（{{kindText .Target.Kind}}）</span>{{else}}—{{end}}</td></tr>
+      {{if .Target}}{{if .Target.URL}}<tr><th>目标地址</th><td class="mono">{{.Target.URL}}</td></tr>{{end}}{{end}}
+      <tr><th>尝试次数</th><td>{{.Item.Attempt}}</td></tr>
+      <tr><th>响应码</th><td class="mono">{{if .Item.ResponseCode}}{{.Item.ResponseCode}}{{else}}—{{end}}</td></tr>
+      {{if .Item.HopChain}}<tr><th>转发跳链</th><td class="mono">{{.Item.HopChain}}</td></tr>{{end}}
+      {{if .Item.NextRetryAt}}<tr><th>下次重试</th><td class="mono">{{ts .Item.NextRetryAt}}</td></tr>{{end}}
+      <tr><th>创建时间</th><td class="mono">{{ts .Item.CreatedAt}}</td></tr>
+      <tr><th>更新时间</th><td class="mono">{{ts .Item.UpdatedAt}}</td></tr>
+    </tbody>
+  </table>
+  {{if .Item.LastError}}<div class="alert err" style="margin-top:14px;margin-bottom:0">{{.Item.LastError}}</div>{{end}}
+</div>
+
+{{if .Item.Subject}}
+<div class="panel">
+  <h2>邮件主题</h2>
+  <pre class="body">{{.Item.Subject}}</pre>
+</div>
+{{end}}
+
+{{if .Item.ReqHeaders}}
+<div class="panel">
+  <h2>出站请求头</h2>
+  <pre class="body">{{pretty .Item.ReqHeaders}}</pre>
+</div>
+{{end}}
+
+<div class="panel">
+  <h2>原始报文（入站）</h2>
+  <pre class="body">{{pretty .Item.Payload}}</pre>
+</div>
+
+<div class="panel">
+  <h2>实际发出（渲染后）</h2>
+  <pre class="body">{{pretty .Item.Rendered}}</pre>
+</div>
+
+{{if .Item.ResponseBody}}
+<div class="panel">
+  <h2>目标响应</h2>
+  <pre class="body">{{.Item.ResponseBody}}</pre>
+</div>
+{{end}}
+
+<div class="actions">
+  <form method="post" action="/deliveries/{{.Item.ID}}/replay">
+    <button class="primary" type="submit">重新投递</button>
+  </form>
+  <form method="post" action="/deliveries/{{.Item.ID}}/delete">
+    <button class="danger" type="submit" hx-confirm="确定删除这条投递记录吗？">删除记录</button>
+  </form>
+</div>
+{{end}}

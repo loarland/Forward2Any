@@ -1,0 +1,31 @@
+services:
+  webhook2any:
+    build: .
+    image: webhook2any:latest
+    container_name: webhook2any
+    restart: unless-stopped
+
+    ports:
+      # 后台界面和所有 webhook 接收端点共用这一个端口，靠路径区分：
+      #   管理后台      http://<host>:8080/
+      #   webhook 接收  http://<host>:8080/hook/<路径标识>
+      # 这样新增接收源不需要改端口，也就不需要动 docker 配置。
+      - "8080:8080"
+
+    volumes:
+      # 命名卷会继承镜像里 /data 的属主，非 root 用户开箱即可写。
+      # 想改成宿主机目录（方便直接 backup）的话，见 README「数据与备份」。
+      - w2a-data:/data
+
+    environment:
+      # 下面这些只在「首次启动」时写入数据库，之后一律以后台「设置」里的值为准。
+      W2A_PORT: "8080"
+      W2A_ADMIN_USER: "admin"
+      # 故意不给默认密码。用 .env 文件或 shell 环境变量提供，例如：
+      #   W2A_ADMIN_PASSWORD=$(openssl rand -base64 18) docker compose up -d
+      W2A_ADMIN_PASSWORD: "${W2A_ADMIN_PASSWORD:?请先设置 W2A_ADMIN_PASSWORD（没有默认密码是刻意的）}"
+      # 必须是外部真正能访问到的地址，回调 URL 和 curl 示例都按它生成
+      W2A_BASE_URL: "${W2A_BASE_URL:-http://localhost:8080}"
+
+volumes:
+  w2a-data:

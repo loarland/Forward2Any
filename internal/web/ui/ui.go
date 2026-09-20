@@ -1,0 +1,114 @@
+// Package ui 持有内嵌的模板与静态资源。
+//
+// 全部用 embed 编译进二进制，容器里不需要额外的静态文件目录。
+package ui
+
+import (
+	"embed"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"strings"
+	"time"
+)
+
+//go:embed templates/*.html
+var templatesFS embed.FS
+
+//go:embed static
+var StaticFS embed.FS
+
+var funcs = template.FuncMap{
+	"ts": func(v int64) string {
+		if v == 0 {
+			return "—"
+		}
+		return time.Unix(v, 0).Format("2006-01-02 15:04:05")
+	},
+	"truncate": func(n int, s string) string {
+		r := []rune(s)
+		if len(r) <= n {
+			return s
+		}
+		return string(r[:n]) + "…"
+	},
+	// pretty 把 JSON 字符串格式化成缩进样式，失败时原样返回。
+	"pretty": func(s string) string {
+		if strings.TrimSpace(s) == "" {
+			return ""
+		}
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			return s
+		}
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return s
+		}
+		return string(b)
+	},
+	"add":        func(a, b int) int { return a + b },
+	"sub":        func(a, b int) int { return a - b },
+	"join":       strings.Join,
+	"statusText": statusText,
+	"kindText":   kindText,
+	"usageText":  usageText,
+}
+
+func statusText(s string) string {
+	switch s {
+	case "pending":
+		return "待投递"
+	case "success":
+		return "成功"
+	case "failed":
+		return "失败"
+	case "dead":
+		return "已放弃"
+	case "dropped":
+		return "已拦截"
+	}
+	return s
+}
+
+func kindText(k string) string {
+	switch k {
+	case "webhook":
+		return "Webhook"
+	case "email":
+		return "邮件"
+	}
+	return k
+}
+
+func usageText(u string) string {
+	switch u {
+	case "in":
+		return "接收"
+	case "out":
+		return "发送"
+	case "both":
+		return "接收 + 发送"
+	}
+	return u
+}
+
+// Render 用 layout.html 套着指定页面模板渲染。
+//
+// 每个页面单独组一个 template 集合：页面文件各自定义 "content"，
+// 放在同一个集合里会互相覆盖。
+func Render(w io.Writer, page string, data any) error {
+	t, err := template.New(page).Funcs(funcs).ParseFS(
+		templatesFS, "templates/layout.html", "templates/"+page+".html")
+	if err != nil {
+		return fmt.Errorf("解析模板 %s: %w", page, err)
+	}
+	return t.ExecuteTemplate(w, "layout", data)
+}
+
+// HasPage 报告某个页面模板是否存在，便于测试遗漏的模板。
+func HasPage(page string) bool {
+	_, err := templatesFS.ReadFile("templates/" + page + ".html")
+	return err == nil
+}

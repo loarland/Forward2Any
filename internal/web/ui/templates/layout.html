@@ -1,0 +1,32 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Webhook2Any</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+{{if .Nav}}
+<header class="topbar">
+  <a class="brand" href="/">Webhook2Any</a>
+  <nav>
+    <a href="/" class="{{if eq .Nav "dashboard"}}active{{end}}">概览</a>
+    <a href="/sources" class="{{if eq .Nav "sources"}}active{{end}}">源</a>
+    <a href="/rules" class="{{if eq .Nav "rules"}}active{{end}}">规则</a>
+    <a href="/deliveries" class="{{if eq .Nav "deliveries"}}active{{end}}">投递日志</a>
+    <a href="/settings" class="{{if eq .Nav "settings"}}active{{end}}">设置</a>
+  </nav>
+  <form class="logout" method="post" action="/logout"><button class="ghost" type="submit">退出</button></form>
+</header>
+{{end}}
+<main class="{{if not .Nav}}narrow{{end}}">
+{{if .Flash}}<div class="alert ok">{{.Flash}}</div>{{end}}
+{{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

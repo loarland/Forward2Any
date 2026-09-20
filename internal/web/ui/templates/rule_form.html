@@ -1,0 +1,96 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>{{if .IsNew}}新建规则{{else}}编辑规则{{end}}</h1>
+  <a class="btn" href="/rules">返回</a>
+</div>
+
+<form method="post" action="{{if .IsNew}}/rules{{else}}/rules/{{.Rule.ID}}{{end}}">
+
+<div class="panel">
+  <h2>基本信息</h2>
+  <label><span>规则名称</span><input type="text" name="name" value="{{.Rule.Name}}" required></label>
+  <div class="checkbox-line">
+    <input type="checkbox" id="enabled" name="enabled" value="1" {{if .Rule.Enabled}}checked{{end}}>
+    <label for="enabled">启用该规则</label>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>接收源 → 目标源</h2>
+  <div class="grid2">
+    <label>
+      <span>接收源 <span class="hint">这些源收到消息时触发本规则</span></span>
+      <div class="picker">
+        {{range .Sources}}
+        <label>
+          <input type="checkbox" name="from_source_ids" value="{{.ID}}" {{if index $.FromSet .ID}}checked{{end}}>
+          {{.Name}} <span class="muted">（{{kindText .Kind}}·{{usageText .Usage}}）</span>
+        </label>
+        {{else}}
+        <div class="muted">还没有源，先去「源」页面创建</div>
+        {{end}}
+      </div>
+    </label>
+    <label>
+      <span>目标源 <span class="hint">消息会被转发到这些源</span></span>
+      <div class="picker">
+        {{range .Sources}}
+        <label>
+          <input type="checkbox" name="to_source_ids" value="{{.ID}}" {{if index $.ToSet .ID}}checked{{end}}>
+          {{.Name}} <span class="muted">（{{kindText .Kind}}·{{usageText .Usage}}）</span>
+        </label>
+        {{else}}
+        <div class="muted">还没有源，先去「源」页面创建</div>
+        {{end}}
+      </div>
+    </label>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>过滤条件</h2>
+  <label>
+    <span>一行一条，全部满足才转发；留空表示全部转发</span>
+    <textarea name="filters" rows="6" placeholder="action eq push&#10;repository.private eq false&#10;commits.0.message contains [skip]">{{.FilterText}}</textarea>
+  </label>
+  <div class="sub">
+    格式：<span class="mono">路径 操作符 值</span>。路径用点分隔，数字段表示数组下标（如 <span class="mono">commits.0.id</span>）。
+    <br>
+    操作符：<span class="mono">eq</span>、<span class="mono">ne</span>、<span class="mono">gt</span>、<span class="mono">lt</span>、<span class="mono">contains</span>、<span class="mono">not_contains</span>、<span class="mono">exists</span>、<span class="mono">not_exists</span>、<span class="mono">regex</span>、<span class="mono">in</span>。
+    <br>
+    值按 JSON 解析，所以 <span class="mono">true</span>、<span class="mono">123</span>、<span class="mono">[1,2]</span> 都写得出来；裸词（如 <span class="mono">push</span>）当作字符串。
+    以 <span class="mono">#</span> 开头的行是注释。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>模板转换</h2>
+  <label>
+    <span>报文体模板 <span class="hint">Go template 语法；留空表示原样透传入站报文</span></span>
+    <textarea name="body_template" rows="7" placeholder="&#123;&#123;.Payload.repository.full_name&#125;&#125; 收到 &#123;&#123;len .Payload.commits&#125;&#125; 个提交">{{.Rule.BodyTemplate}}</textarea>
+  </label>
+  <label>
+    <span>邮件主题模板 <span class="hint">只对邮件目标生效；留空自动生成</span></span>
+    <input type="text" name="subject_template" value="{{.Rule.SubjectTemplate}}" placeholder="[&#123;&#123;.Source.name&#125;&#125;] &#123;&#123;.Payload.subject&#125;&#125;">
+  </label>
+  <label>
+    <span>请求头模板 <span class="hint">JSON 对象，值支持模板；留空用源上配置的固定请求头</span></span>
+    <textarea name="headers_template" rows="3" placeholder="&#123;&quot;X-Source&quot;: &quot;&#123;&#123;.Source.slug&#125;&#125;&quot;&#125;">{{.Rule.HeadersTemplate}}</textarea>
+  </label>
+  <div class="sub">
+    可用变量：
+    <span class="mono">.Payload</span>（解析后的 JSON；报文不是 JSON 时为 <span class="mono">&#123;"raw":"..."&#125;</span>）、
+    <span class="mono">.Raw</span>（原始报文）、
+    <span class="mono">.Source.name</span> / <span class="mono">.Source.slug</span> / <span class="mono">.Source.kind</span>、
+    <span class="mono">.Headers</span>（入站请求头）、
+    <span class="mono">.TraceID</span>、
+    <span class="mono">.Now</span>
+  </div>
+</div>
+
+<div class="actions">
+  <button class="primary" type="submit">保存</button>
+  <a class="btn" href="/rules">取消</a>
+</div>
+</form>
+{{end}}

@@ -1,0 +1,48 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>源</h1>
+    <div class="sub">接收来源与转发目标，支持 webhook 与邮件两种类型</div>
+  </div>
+  <a class="btn primary" href="/sources/new">新建源</a>
+</div>
+
+{{if not .Rows}}
+<div class="panel"><div class="empty">还没有源。先建一个接收源，再到「规则」里配置转发。</div></div>
+{{end}}
+
+{{range .Rows}}
+<div class="panel">
+  <div class="rowhead">
+    <div>
+      <strong>{{.Src.Name}}</strong>
+      <span class="tag {{if .Src.Enabled}}on{{else}}off{{end}}">{{if .Src.Enabled}}启用{{else}}停用{{end}}</span>
+      <span class="tag">{{kindText .Src.Kind}}</span>
+      <span class="tag">{{usageText .Src.Usage}}</span>
+    </div>
+    <div class="actions">
+      <form method="post" action="/sources/{{.Src.ID}}/test">
+        <button class="sm" type="submit" {{if not .Src.CanSend}}disabled title="该源不是发送用途"{{end}}>发送测试</button>
+      </form>
+      <a class="btn sm" href="/sources/{{.Src.ID}}/edit">编辑</a>
+      <form method="post" action="/sources/{{.Src.ID}}/delete">
+        <button class="sm danger" type="submit" hx-confirm="确定删除源「{{.Src.Name}}」吗？引用它的规则会自动摘掉这个源。">删除</button>
+      </form>
+    </div>
+  </div>
+
+  {{if .HookURL}}
+  <div class="copy-row">
+    <input type="text" readonly value="{{.HookURL}}">
+    <button class="sm" type="button" data-copy="{{.HookURL}}">复制</button>
+  </div>
+  <details>
+    <summary class="muted">curl 示例</summary>
+    <pre class="body">{{.Curl}}</pre>
+  </details>
+  {{end}}
+
+  {{if .Src.IPAllow}}<div class="sub" style="margin-top:8px">IP 白名单：<span class="mono">{{.Src.IPAllow}}</span></div>{{end}}
+</div>
+{{end}}
+{{end}}

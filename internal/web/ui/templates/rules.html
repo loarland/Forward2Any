@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>规则</h1>
+    <div class="sub">把接收源的信息转发到一个或多个目标源</div>
+  </div>
+  <a class="btn primary" href="/rules/new">新建规则</a>
+</div>
+
+{{if .NoSource}}
+<div class="alert warn">还没有任何源，先去「源」页面建一个接收源和一个目标源。</div>
+{{end}}
+
+{{if not .Rows}}
+<div class="panel"><div class="empty">还没有规则。规则决定「哪些源收到的消息，转发到哪些源」。</div></div>
+{{else}}
+<table class="panel">
+  <thead>
+    <tr>
+      <th>名称</th>
+      <th>接收源</th>
+      <th></th>
+      <th>目标源</th>
+      <th class="nowrap">过滤条件</th>
+      <th class="nowrap">状态</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Rows}}
+    <tr>
+      <td><a href="/rules/{{.Rule.ID}}/edit">{{.Rule.Name}}</a></td>
+      <td>{{range $i, $n := .From}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
+      <td class="muted">→</td>
+      <td>{{range $i, $n := .To}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
+      <td class="nowrap">{{len .Rule.Filters}} 条</td>
+      <td><span class="tag {{if .Rule.Enabled}}on{{else}}off{{end}}">{{if .Rule.Enabled}}启用{{else}}停用{{end}}</span></td>
+      <td class="nowrap">
+        <a href="/rules/{{.Rule.ID}}/edit">编辑</a>
+        <form method="post" action="/rules/{{.Rule.ID}}/delete" style="display:inline">
+          <button class="sm danger" type="submit" hx-confirm="确定删除规则「{{.Rule.Name}}」吗？">删除</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}

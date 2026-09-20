@@ -1,0 +1,50 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>概览</h1>
+    <div class="sub">今日接收与投递情况</div>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="num">{{index .Stats "pending"}}</div><div class="lbl">待投递</div></div>
+  <div class="card ok"><div class="num">{{index .Stats "success"}}</div><div class="lbl">投递成功</div></div>
+  <div class="card err"><div class="num">{{index .Stats "failed"}}</div><div class="lbl">待重试</div></div>
+  <div class="card warn"><div class="num">{{index .Stats "dead"}}</div><div class="lbl">已放弃</div></div>
+  <div class="card"><div class="num">{{index .Stats "dropped"}}</div><div class="lbl">已拦截</div></div>
+</div>
+
+<div class="panel">
+  <h2>最近投递</h2>
+  {{if .Recent}}
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap">时间</th>
+        <th>规则</th>
+        <th>接收源</th>
+        <th>目标源</th>
+        <th class="nowrap">状态</th>
+        <th class="nowrap">响应</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Recent}}
+      <tr>
+        <td class="nowrap mono">{{ts .CreatedAt}}</td>
+        <td>{{.RuleName}}</td>
+        <td>{{.InSourceName}}</td>
+        <td>{{.OutSourceName}}</td>
+        <td><span class="tag {{.Status}}">{{statusText .Status}}</span></td>
+        <td class="nowrap mono">{{if .ResponseCode}}{{.ResponseCode}}{{else}}—{{end}}</td>
+        <td><a href="/deliveries/{{.ID}}">详情</a></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">还没有投递记录。先到「源」里建一个接收源，再到「规则」里配置转发。</div>
+  {{end}}
+</div>
+{{end}}

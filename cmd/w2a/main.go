@@ -1,0 +1,154 @@
+// 命令 w2a：Webhook2Any 服务端。
+//
+//	go run ./cmd/w2a              # 启动服务
+//	./w2a healthcheck --url ...   # 容器健康检查（distroless 里没有 curl）
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	// 把时区库编进二进制，distroless 镜像里没有 tzdata。
+	_ "time/tzdata"
+
+	"github.com/loarland/Webhook2Any/internal/config"
+	"github.com/loarland/Webhook2Any/internal/engine"
+	"github.com/loarland/Webhook2Any/internal/mailin"
+	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Webhook2Any/internal/web"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck(os.Args[2:]))
+	}
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "启动失败:", err)
+		os.Exit(1)
+	}
+}
+
+func healthcheck(args []string) int {
+	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	urlFlag := fs.String("url", "", "健康检查地址；留空则按数据目录里的设置自动推断")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	// 端口是可以在后台改的，所以默认按数据库里的实际值来探，
+	// 免得用户改了端口之后容器一直显示 unhealthy。
+	target := *urlFlag
+	if target == "" {
+		port := 8080
+		if cfg, err := config.FromEnv(); err == nil {
+			if st, err := store.Open(cfg.DataDir); err == nil {
+				if s, err := st.Settings(); err == nil {
+					port = s.WebPort
+				}
+				st.Close()
+			}
+		}
+		target = fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(target)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "健康检查失败:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "健康检查返回", resp.Status)
+		return 1
+	}
+	return 0
+}
+
+func run() error {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+
+	log := newLogger(cfg.LogLevel)
+	slog.SetDefault(log)
+
+	st, err := store.Open(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	generated, err := st.Bootstrap(store.BootstrapInput{
+		Port:      cfg.Port,
+		AdminUser: cfg.AdminUser,
+		AdminPass: cfg.AdminPass,
+		BaseURL:   cfg.BaseURL,
+	})
+	if err != nil {
+		return err
+	}
+
+	settings, err := st.Settings()
+	if err != nil {
+		return err
+	}
+
+	log.Info("Webhook2Any 已启动",
+		"db", st.Path, "端口", settings.WebPort, "管理员", settings.AdminUser, "回调基址", settings.BaseURL)
+	if generated != "" {
+		// 只在首次启动、且没有提供 W2A_ADMIN_PASSWORD 时出现。
+		log.Warn("已生成初始管理员密码，请登录后立即修改；此密码只显示这一次",
+			"用户名", settings.AdminUser, "密码", generated)
+	}
+
+	// 转发引擎：负责规则分发与失败重试。
+	eng := engine.New(st, log)
+	eng.Start()
+	defer eng.Stop()
+
+	// 邮件接收：按数据库里的邮件接收源按需起停轮询协程。
+	poller := mailin.New(st, eng, log)
+	poller.Start()
+	defer poller.Stop()
+
+	srv := web.New(st, log, eng, poller)
+	if err := srv.Start(settings.WebPort); err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	log.Info("收到退出信号，正在关闭…")
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutCtx)
+}
+
+func newLogger(level string) *slog.Logger {
+	var lv slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lv = slog.LevelDebug
+	case "warn":
+		lv = slog.LevelWarn
+	case "error":
+		lv = slog.LevelError
+	default:
+		lv = slog.LevelInfo
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
+}
