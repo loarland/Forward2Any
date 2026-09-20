@@ -23,10 +23,73 @@
     });
   }
 
-  document.addEventListener('DOMContentLoaded', syncSourceForm);
+  // 2) 鉴权方式一换，「请求头名 / 密钥」这两格的含义就变了，说明也跟着换。
+  //    服务端已经把四种说明都渲染好了（只有当前那种不带 hidden），
+  //    这里只负责在选择变化时切换，所以没有 JS 也能看到对的那段。
+  var AUTH_HINT = {
+    none:        { header: '', secret: '' },
+    token:       { header: '密钥放哪个请求头', secret: '两边约定一致即可' },
+    hmac_sha256: { header: '签名放哪个请求头', secret: '上游配置的 Webhook Secret' },
+    basic:       { header: '这里填用户名', secret: '这里填密码' }
+  };
+  var AUTH_PLACEHOLDER = {
+    none:        { header: '', secret: '' },
+    token:       { header: 'X-F2A-Token', secret: '随便一串，两边一样即可' },
+    hmac_sha256: { header: 'X-Hub-Signature-256', secret: '' },
+    basic:       { header: '用户名，如 f2a', secret: '' }
+  };
+
+  function syncAuthForm() {
+    var modeEl = document.querySelector('[name=auth_mode]');
+    if (!modeEl) {
+      return;
+    }
+    var mode = modeEl.value;
+    var hint = AUTH_HINT[mode] || AUTH_HINT.none;
+    var ph = AUTH_PLACEHOLDER[mode] || AUTH_PLACEHOLDER.none;
+
+    document.querySelectorAll('[data-auth-note]').forEach(function (el) {
+      el.hidden = el.getAttribute('data-auth-note') !== mode;
+    });
+    // 「不校验」时把两个凭据格藏掉，不然看着像必填。
+    // 用 hidden 而不是移除，值照样会随表单提交上去，切回别的模式也不会丢。
+    document.querySelectorAll('[data-auth-field]').forEach(function (el) {
+      el.hidden = mode === 'none';
+    });
+
+    var headerHint = document.querySelector('[data-auth-header-hint]');
+    if (headerHint) {
+      headerHint.textContent = hint.header;
+    }
+    var secretHint = document.querySelector('[data-auth-secret-hint]');
+    if (secretHint) {
+      secretHint.textContent = hint.secret;
+    }
+    var header = document.querySelector('[name=auth_header]');
+    if (header && ph.header) {
+      header.placeholder = ph.header;
+    }
+    var secret = document.querySelector('[name=auth_secret]');
+    if (secret && ph.secret) {
+      secret.placeholder = ph.secret;
+    }
+  }
+
+  function syncForms() {
+    syncSourceForm();
+    syncAuthForm();
+  }
+
+  document.addEventListener('DOMContentLoaded', syncForms);
   document.addEventListener('change', function (e) {
-    if (e.target && (e.target.name === 'kind' || e.target.name === 'usage')) {
+    if (!e.target) {
+      return;
+    }
+    if (e.target.name === 'kind' || e.target.name === 'usage') {
       syncSourceForm();
+    }
+    if (e.target.name === 'auth_mode') {
+      syncAuthForm();
     }
   });
 

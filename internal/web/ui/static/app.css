@@ -93,8 +93,6 @@
 }
 .form-actions .muted { font-size: 13px; }
 
-.hint-block { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
-
 /* 原生 file 控件没法直接美化（那半个按钮是浏览器画的），所以把它藏起来、
    用 label 里的 .btn 当触发器，再由 app.js 把选中的文件名显示出来。 */
 .file-field {
@@ -170,16 +168,6 @@
    间距就对不齐了。 */
 .filter-add { display: flex; margin-top: 10px; }
 .filter-visual .alert { margin: 12px 0 0; }
-
-/* 这段是参考资料，不是表单的一部分。用一条淡分隔线跟控件拉开，
-   免得紧贴着「添加条件」看起来像它的附属说明。
-   选择器写成 .sub.filter-hint：它跟 .sub 特异度相同，只靠文件顺序分胜负，
-   而 .sub 定义在后面（表单那一节），单写 .filter-hint 会被它的 margin 盖掉。 */
-.sub.filter-hint {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
 
 @media (max-width: 720px) {
   .filter-row { flex-wrap: wrap; }
@@ -328,9 +316,6 @@ label { display: block; margin-bottom: 14px; font-size: 13px; color: #333a48; }
 label > span { display: block; margin-bottom: 5px; font-weight: 500; }
 label .hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 
-/* 表单控件下面的说明文字。page-head 里那份另有字号，靠 .page-head .sub 覆盖。 */
-.sub { color: var(--muted); font-size: 12.5px; line-height: 1.7; margin-top: 4px; }
-
 input[type=text], input[type=password], input[type=number], input[type=email], input[type=search], select, textarea {
   width: 100%;
   padding: 7px 10px;
@@ -415,12 +400,43 @@ button.add, .btn.add {
 }
 button.add:hover, .btn.add:hover { background: #f2f6fe; border-color: var(--accent); }
 
-/* ---------- 提示 ---------- */
+/* ---------- 消息与说明 ----------
+   两套东西，别混：
+   - .alert 是「发生了什么/要注意什么」的状态消息（成功、失败、警告），带语义色。
+   - .note  是「这一块是干什么的、变量怎么填」的参考说明，全站一种样式。
+   以前说明文字一会儿是裸段落、一会儿是 alert info、一会儿是 hint-block，
+   同一个页面上三种长相，所以统一到这里。 */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13.5px; }
 .alert.ok { background: #eaf7ef; border: 1px solid #bfe3cd; color: #14663c; }
 .alert.err { background: #fdeeee; border: 1px solid #f0c6c6; color: #a52525; }
 .alert.warn { background: #fdf6e7; border: 1px solid #edd9a8; color: #7d5300; }
-.alert.info { background: #eaf1fd; border: 1px solid #c3d5f8; color: #23478f; }
+
+.note {
+  margin: 10px 0;
+  padding: 9px 13px;
+  background: #f4f7fd;
+  border: 1px solid #dbe4f5;
+  /* 左侧色条：跟 .alert 的整圈描边区分开，一眼看出「这是说明，不是报错」 */
+  border-left: 3px solid #93aede;
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: #4a5361;
+}
+.note > :first-child { margin-top: 0; }
+.note > :last-child { margin-bottom: 0; }
+.note:last-child { margin-bottom: 0; }
+.note p { margin: 0 0 8px; }
+.note strong { color: #2b323d; font-weight: 600; }
+/* 说明里常要嵌变量名/示例值，给它们一点对比，不然整段糊成一片 */
+.note .mono { color: #2f4571; background: #e8eefb; padding: 1px 5px; border-radius: 4px; }
+.note code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* 变量清单之类的对照表，只用在 .note 里面 */
+.note table { width: auto; margin: 6px 0 10px; font-size: 12.5px; }
+.note th, .note td { padding: 3px 12px 3px 0; border: none; vertical-align: top; background: none; }
+.note th { width: 1%; white-space: nowrap; font-weight: 400; text-align: left; }
+.note tbody tr:hover { background: none; }
 
 .muted { color: var(--muted); }
 .tag {

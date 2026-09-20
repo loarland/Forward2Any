@@ -46,21 +46,63 @@
         <option value="basic" {{if eq .Src.AuthMode "basic"}}selected{{end}}>HTTP Basic</option>
       </select>
     </label>
-    <label>
-      <span>请求头名 <span class="hint">Basic 方式下填用户名</span></span>
+    <label data-auth-field>
+      <span>请求头名 <span class="hint" data-auth-header-hint>密钥放哪个请求头</span></span>
       <input type="text" name="auth_header" value="{{.Src.AuthHeader}}" placeholder="X-F2A-Token">
     </label>
-    <label><span>密钥 <span class="hint">Basic 方式下填密码</span></span>
+    <label data-auth-field>
+      <span>密钥 <span class="hint" data-auth-secret-hint>两边约定一致即可</span></span>
       <input type="password" name="auth_secret" value="{{.Src.AuthSecret}}" autocomplete="new-password">
     </label>
   </div>
+
+  {{/* 四种鉴权方式要填的东西差别很大，所以按选择切换说明。
+       四段都渲染出来、只有当前那段不带 hidden —— 这样没有 JS 时也能看到对的说明，
+       app.js 只负责在选择变化时换个显示。 */}}
+  <div class="note" data-auth-note="none" {{if ne .Src.AuthMode "none"}}hidden{{end}}>
+    <strong>不校验</strong>：任何知道这个回调地址的人都能往里面发消息。
+    只适合内网、或者上游确实没法带密钥的情况。如果只能用这个，建议在上面配一条
+    <strong>IP 白名单</strong>，至少限制一下来源。
+  </div>
+
+  <div class="note" data-auth-note="token" {{if ne .Src.AuthMode "token"}}hidden{{end}}>
+    <strong>固定密钥</strong>：上游在请求头里带上一串约定的字符就行，最好接、也最常用。
+    <table>
+      <tr><th>请求头名</th><td>密钥放在哪个头里，默认 <span class="mono">X-F2A-Token</span>，改成别的名字也行。</td></tr>
+      <tr><th>密钥</th><td>两边约定好的那串字符。上游发的值必须和它完全一致。</td></tr>
+    </table>
+    上游要发的是：<span class="mono">X-F2A-Token: 你的密钥</span>
+  </div>
+
+  <div class="note" data-auth-note="hmac_sha256" {{if ne .Src.AuthMode "hmac_sha256"}}hidden{{end}}>
+    <strong>HMAC-SHA256 签名</strong>：拿密钥对<strong>原始报文</strong>算一次 HMAC-SHA256，
+    把十六进制结果放进请求头。报文只要被动过一个字节签名就对不上，所以比固定密钥安全。
+    GitHub、Gitea 的 Webhook 默认就是这个方式。
+    <table>
+      <tr><th>请求头名</th><td>签名放哪个头，默认 <span class="mono">X-Hub-Signature-256</span>（跟 GitHub 一致）。</td></tr>
+      <tr><th>密钥</th><td>你在上游填的那个 Webhook Secret，两边必须一样。</td></tr>
+    </table>
+    上游要发的是：<span class="mono">X-Hub-Signature-256: sha256=&lt;十六进制摘要&gt;</span>
+  </div>
+
+  <div class="note" data-auth-note="basic" {{if ne .Src.AuthMode "basic"}}hidden{{end}}>
+    <strong>HTTP Basic</strong>：标准的
+    <span class="mono">Authorization: Basic base64(用户名:密码)</span>，浏览器和 curl 都原生支持。
+    <table>
+      <tr><th>请求头名</th><td>这里当<strong>用户名</strong>填。</td></tr>
+      <tr><th>密钥</th><td>这里当<strong>密码</strong>填。</td></tr>
+    </table>
+    用 curl 测试就是：<span class="mono">curl -u '用户名:密码' &lt;回调地址&gt;</span>
+  </div>
+
   <label>
     <span>IP 白名单 <span class="hint">逗号分隔，支持 CIDR；留空表示不限制</span></span>
     <input type="text" name="ip_allow" value="{{.Src.IPAllow}}" placeholder="203.0.113.7, 10.0.0.0/8">
   </label>
-  <div class="alert info">
+  <div class="note">
     保存后会得到一个回调地址 <span class="mono">/hook/&lt;路径标识&gt;</span>，把它填到发送方即可。
-    签名方式为 <span class="mono">sha256=HMAC-SHA256(密钥, 原始报文)</span>，与 GitHub 的 <span class="mono">X-Hub-Signature-256</span> 一致。
+    如果后台挂在了 Nginx 之类的反代后面，IP 白名单里要填<strong>反代的地址</strong>，
+    因为程序看到的是直接连上来的那个 IP。
   </div>
 </div>
 
@@ -102,9 +144,11 @@
     <label><span>轮询间隔（秒）</span><input type="number" name="imap_interval" value="{{.Src.IMAPInterval}}" min="10"></label>
   </div>
   <label><span>邮箱文件夹</span><input type="text" name="imap_folder" value="{{.Src.IMAPFolder}}" placeholder="INBOX"></label>
-  <div class="alert warn">
-    只处理「未读」邮件，处理成功后标记为已读。间隔小于 10 秒会按 60 秒处理。
-    不加密方式会明文传输密码，仅建议在可信内网使用。
+  <div class="note">
+    只处理<strong>未读</strong>邮件，处理成功后标记为已读 —— 所以同一封邮件不会被转发两次，
+    但也意味着你在邮箱里手动标成已读的邮件不会被处理。
+    轮询间隔小于 10 秒会按 60 秒处理（对邮件服务器礼貌一点，也不容易被封）。<br>
+    <strong>注意</strong>：选「不加密」时密码是明文传输的，只在可信内网里这么用。
   </div>
 </div>
 

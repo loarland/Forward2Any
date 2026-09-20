@@ -69,16 +69,29 @@
 
     <div class="filter-text" data-filter-text>
       <textarea name="filters" rows="6" placeholder="action eq push&#10;repository.private eq false&#10;commits.0.message contains [skip]">{{.FilterText}}</textarea>
-      <div class="sub">
-        格式：<span class="mono">路径 操作符 值</span>，一行一条。
-        以 <span class="mono">#</span> 开头的行是注释（注释只在文本模式下保留）。
+      <div class="note">
+        一行一条，格式是 <span class="mono">路径 操作符 值</span>。
+        以 <span class="mono">#</span> 开头的行是注释（注释只在文本模式下保留，切回可视化会丢）。
       </div>
     </div>
 
-    <div class="sub filter-hint">
-      路径用点分隔，数字段表示数组下标（如 <span class="mono">commits.0.id</span>）。
-      值按 JSON 解析，所以 <span class="mono">true</span>、<span class="mono">123</span>、<span class="mono">[1,2]</span> 是布尔、数字、数组，
-      裸词（如 <span class="mono">push</span>）当字符串。
+    <div class="note">
+      <strong>「路径」照着入站报文的 JSON 写</strong>，用点号一层层往下。
+      报文是 <span class="mono">&#123;"repository":&#123;"private":false&#125;&#125;</span>，路径就写
+      <span class="mono">repository.private</span>；数组用下标，<span class="mono">commits.0.id</span> 是第 1 个提交的 id。
+      <br>
+      <strong>「值」按 JSON 解析</strong>：<span class="mono">true</span> 是布尔、<span class="mono">123</span> 是数字、
+      <span class="mono">[1,2]</span> 是数组；不加引号的裸词（比如 <span class="mono">push</span>）当字符串。
+      要精确匹配带空格的值就加引号：<span class="mono">"带 空格"</span>。
+      <br>
+      <strong>几条条件是「全部满足」才转发</strong>，所以「带 [skip] 的不转发」要写成<strong>不包含</strong>。
+      只想转发非私有仓库的 push，就是这样三条：
+      <table>
+        <tr><th><span class="mono">action</span></th><td>等于</td><td><span class="mono">push</span></td></tr>
+        <tr><th><span class="mono">repository.private</span></th><td>等于</td><td><span class="mono">false</span></td></tr>
+        <tr><th><span class="mono">commits.0.message</span></th><td>不包含</td><td><span class="mono">[skip]</span></td></tr>
+      </table>
+      想反过来（命中任意一条就转发）现在不支持，得拆成多条规则。
     </div>
   </div>
 
@@ -119,17 +132,39 @@
     <span>请求头模板 <span class="hint">JSON 对象，值支持模板；留空用源上配置的固定请求头</span></span>
     <textarea name="headers_template" rows="3" placeholder="&#123;&quot;X-Source&quot;: &quot;&#123;&#123;.Source.slug&#125;&#125;&quot;&#125;">{{.Rule.HeadersTemplate}}</textarea>
   </label>
-  <div class="sub">
-    可用变量：
-    <span class="mono">.Payload</span>（解析后的 JSON；报文不是 JSON 时为 <span class="mono">&#123;"raw":"..."&#125;</span>）、
-    <span class="mono">.Raw</span>（原始报文）、
-    <span class="mono">.Source.name</span> / <span class="mono">.Source.slug</span> / <span class="mono">.Source.kind</span>、
-    <span class="mono">.Headers</span>（入站请求头）、
-    <span class="mono">.TraceID</span>、
-    <span class="mono">.Now</span>
+  <div class="note">
+    <strong>这三格留空就原样转发，不需要模板也能用。</strong>
+    填了就是用 Go template 把入站报文重新拼一遍：<span class="mono">&#123;&#123; &#125;&#125;</span>
+    里写变量或函数，外面的字原样保留。
+    <table>
+      <tr><th><span class="mono">.Payload</span></th>
+        <td>入站报文解析出来的 JSON，用点号一层层往下取。报文不是 JSON 时，它是 <span class="mono">&#123;"raw": "原始报文"&#125;</span>。</td></tr>
+      <tr><th><span class="mono">.Raw</span></th>
+        <td>原始报文字符串，一个字都没动过的。</td></tr>
+      <tr><th><span class="mono">.Source</span></th>
+        <td>接收源的信息：<span class="mono">.name</span>、<span class="mono">.slug</span>、<span class="mono">.kind</span>、<span class="mono">.id</span>。</td></tr>
+      <tr><th><span class="mono">.Headers</span></th>
+        <td>入站请求头。邮件源里放的是 <span class="mono">Message-Id</span>、<span class="mono">Subject</span>、<span class="mono">From</span> 这些。</td></tr>
+      <tr><th><span class="mono">.TraceID</span></th>
+        <td>这次入站请求的追踪号，和投递日志详情页上显示的那个是同一个，排查时靠它串起来。</td></tr>
+      <tr><th><span class="mono">.Now</span></th>
+        <td>当前时间。<span class="mono">&#123;&#123;.Now.Format "2006-01-02 15:04"&#125;&#125;</span> 就能格式化成 <span class="mono">2026-09-20 18:30</span>。</td></tr>
+    </table>
+    长度、格式化这类用内置函数，比如 <span class="mono">&#123;&#123;len .Payload.commits&#125;&#125;</span>。
+  </div>
+
+  <div class="note">
+    <strong>完整例子</strong>：GitHub 推过来的是
+    <span class="mono">&#123;"repository":&#123;"full_name":"a/b"&#125;,"commits":[1,2,3]&#125;</span>。
+    在「报文体模板」里写
+    <span class="mono">&#123;&#123;.Payload.repository.full_name&#125;&#125; 收到 &#123;&#123;len .Payload.commits&#125;&#125; 个提交</span>，
+    实际发出去的就是 <span class="mono">a/b 收到 3 个提交</span>。
     <br>
-    模板里取数组元素要用 <span class="mono">&#123;&#123;index .Payload.commits 0&#125;&#125;</span>，
-    不能像过滤器那样写 <span class="mono">.commits.0</span>（那是过滤器的语法，模板里会报语法错）。
+    <strong>两个坑</strong>：
+    一是取数组元素必须写 <span class="mono">&#123;&#123;index .Payload.commits 0&#125;&#125;</span>，
+    不能像上面「过滤条件」那样写 <span class="mono">.commits.0</span>（那是过滤器的语法，模板里会直接报语法错，保存时就挡下来）。
+    二是「请求头模板」不是文本模板而是 <strong>JSON 对象</strong>，值里才能嵌模板，
+    比如 <span class="mono">&#123;"X-Source": "&#123;&#123;.Source.slug&#125;&#125;"&#125;</span>，填错 JSON 保存时也会报错。
   </div>
 </div>
 

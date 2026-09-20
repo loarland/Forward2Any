@@ -6,7 +6,7 @@
   </div>
 </div>
 
-{{if .Notice}}<div class="alert info">{{.Notice}}</div>{{end}}
+{{if .Notice}}<div class="alert ok">{{.Notice}}</div>{{end}}
 
 <form method="post" action="/settings">
 
@@ -22,9 +22,10 @@
       <input type="text" name="base_url" value="{{.S.BaseURL}}">
     </label>
   </div>
-  <div class="alert info">
-    改端口会在本进程内立即重新绑定监听。若在 Docker 中运行，还需要同步修改 docker-compose.yml 的端口映射，
-    否则容器外访问不到；此时建议一并把「回调基址」改成外部实际访问的地址。
+  <div class="note">
+    改端口会在本进程内立即重新绑定监听，不用重启。
+    但如果跑在 Docker 里，还得同步改 docker-compose.yml 的端口映射，否则容器外访问不到；
+    这时候建议把「回调基址」也一并改成外部实际访问的地址。
   </div>
 </div>
 
@@ -45,8 +46,13 @@
     <label><span>报文保存上限（字节）</span><input type="number" name="payload_max_bytes" value="{{.S.PayloadMaxBytes}}" min="1024"></label>
   </div>
   <label><span>日志保留天数</span><input type="number" name="log_retention_days" value="{{.S.LogRetentionDays}}" min="1"></label>
-  <div class="sub">
-    退避按「基数 × 2<sup>次数-1</sup>」计算，最长 1 小时。数据库文件：<span class="mono">{{.DBPath}}</span>
+  <div class="note">
+    重试间隔按「基数 × 2<sup>次数-1</sup>」往上翻，最长不超过 1 小时。
+    次数用尽后状态变成「已放弃」，不会自动再试，但可以在投递详情页手动重新投递。
+    <br>
+    「报文保存上限」指的是每条投递记录最多存多少字节的报文，超出的部分会被截断后入库。
+    <br>
+    数据库文件：<span class="mono">{{.DBPath}}</span>
   </div>
 </div>
 
@@ -61,13 +67,11 @@
   <div class="grid2">
     <div>
       <div class="field-label">导出</div>
-      <p class="hint-block">把所有源与规则导出成 JSON，用于备份或换机器部署。</p>
       <a class="btn" href="/settings/export">下载配置</a>
     </div>
     <div>
       <form method="post" action="/settings/import" enctype="multipart/form-data">
         <div class="field-label">导入</div>
-        <p class="hint-block">选择一份之前导出的 JSON 文件。</p>
         <label class="file-field">
           <input type="file" name="file" accept="application/json,.json">
           <span class="btn">选择文件</span>
@@ -77,8 +81,12 @@
       </form>
     </div>
   </div>
-  <div class="alert warn" style="margin-top:14px;margin-bottom:0">
-    导出文件不含管理员账号、密码和监听端口。导入是整体替换，不做合并。
+  <div class="note">
+    <strong>导出</strong>会把所有源与规则写成一个 JSON 文件，用来备份或换台机器部署。
+    文件里<strong>不含</strong>管理员账号、密码和监听端口，换机器后要重新设一遍。
+    <br>
+    <strong>导入是整体替换</strong>，不做合并：文件里没有的源和规则会被删掉。
+    源里的密钥（Webhook 密钥、SMTP / IMAP 密码）会原样导出，这个文件要当敏感文件保管。
   </div>
 </div>
 {{end}}
