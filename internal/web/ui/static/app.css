@@ -145,6 +145,17 @@
   border: 1px solid var(--line);
   border-radius: 6px;
 }
+/* 正在改哪一行一眼可见 */
+.filter-row:focus-within { background: #fff; border-color: var(--accent); }
+/* 行号跟服务端「过滤器第 N 行」的报错对得上 */
+.filter-row .filter-idx {
+  flex: 0 0 16px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
 /* 用 flex-basis 定宽，压掉全局 input/select 的 width:100%；
    min-width:0 是必须的，不然输入框撑不下会溢出容器。 */
 .filter-row [data-f-path]  { flex: 1 1 160px; min-width: 0; }
@@ -154,9 +165,21 @@
 .filter-row.no-value [data-f-value] { background: #eef0f4; color: var(--muted); }
 .filter-row.invalid [data-f-path], .filter-row.invalid [data-f-value] { border-color: var(--err); }
 
-.filter-empty { padding: 4px 0 12px; font-size: 13px; }
-.filter-add { margin-top: 10px; }
+.filter-empty { margin: 2px 0 12px; font-size: 13px; }
+/* flex 而不是默认块级：行内按钮的基线会在下面留出几像素的降部空隙，
+   间距就对不齐了。 */
+.filter-add { display: flex; margin-top: 10px; }
 .filter-visual .alert { margin: 12px 0 0; }
+
+/* 这段是参考资料，不是表单的一部分。用一条淡分隔线跟控件拉开，
+   免得紧贴着「添加条件」看起来像它的附属说明。
+   选择器写成 .sub.filter-hint：它跟 .sub 特异度相同，只靠文件顺序分胜负，
+   而 .sub 定义在后面（表单那一节），单写 .filter-hint 会被它的 margin 盖掉。 */
+.sub.filter-hint {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 
 @media (max-width: 720px) {
   .filter-row { flex-wrap: wrap; }
@@ -305,6 +328,9 @@ label { display: block; margin-bottom: 14px; font-size: 13px; color: #333a48; }
 label > span { display: block; margin-bottom: 5px; font-weight: 500; }
 label .hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 
+/* 表单控件下面的说明文字。page-head 里那份另有字号，靠 .page-head .sub 覆盖。 */
+.sub { color: var(--muted); font-size: 12.5px; line-height: 1.7; margin-top: 4px; }
+
 input[type=text], input[type=password], input[type=number], input[type=email], input[type=search], select, textarea {
   width: 100%;
   padding: 7px 10px;
@@ -378,6 +404,16 @@ button.danger:hover, .btn.danger:hover { background: #fadada; }
 
 button.ghost, .btn.ghost { background: transparent; border-color: #3a4459; color: #c8cede; }
 button.ghost:hover, .btn.ghost:hover { background: #2a3346; color: #fff; }
+
+/* 「添加一行」是长出新东西的入口，不是提交动作：虚线框 + 强调色文字，
+   跟旁边那些实心动作按钮区分开。 */
+button.add, .btn.add {
+  background: #fff;
+  border-style: dashed;
+  border-color: #b9c2d0;
+  color: var(--accent);
+}
+button.add:hover, .btn.add:hover { background: #f2f6fe; border-color: var(--accent); }
 
 /* ---------- 提示 ---------- */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13.5px; }

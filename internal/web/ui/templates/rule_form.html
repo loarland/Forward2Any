@@ -62,7 +62,7 @@
       <div class="filter-rows" data-filter-rows></div>
       <div class="filter-empty muted" data-filter-empty>还没有条件</div>
       <div class="filter-add">
-        <button type="button" class="btn sm" data-filter-add>+ 添加条件</button>
+        <button type="button" class="btn add" data-filter-add>+ 添加条件</button>
       </div>
       <div class="alert err" data-filter-error hidden></div>
     </div>
@@ -75,7 +75,7 @@
       </div>
     </div>
 
-    <div class="sub">
+    <div class="sub filter-hint">
       路径用点分隔，数字段表示数组下标（如 <span class="mono">commits.0.id</span>）。
       值按 JSON 解析，所以 <span class="mono">true</span>、<span class="mono">123</span>、<span class="mono">[1,2]</span> 是布尔、数字、数组，
       裸词（如 <span class="mono">push</span>）当字符串。
@@ -84,6 +84,8 @@
 
   <template data-filter-row-tpl>
     <div class="filter-row">
+      {{/* 行号不是摆设：服务端的报错写的是「过滤器第 2 行」，有了它一眼就能对上。 */}}
+      <span class="filter-idx" aria-hidden="true"></span>
       <input type="text" data-f-path placeholder="路径，如 repository.private" autocomplete="off">
       <select data-f-op>
         <option value="eq">等于</option>

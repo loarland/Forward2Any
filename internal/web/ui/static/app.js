@@ -152,6 +152,10 @@
     function chrome() {
       var n = rowsBox.children.length;
       emptyBox.hidden = n > 0;
+      // 行号要跟着增删走，服务端报错说的「第 N 行」才对得上。
+      rows().forEach(function (row, i) {
+        row.querySelector('.filter-idx').textContent = i + 1;
+      });
       if (n === 0) {
         errorBox.hidden = true;
       }
