@@ -7,10 +7,13 @@ services:
 
     ports:
       # 后台界面和所有 webhook 接收端点共用这一个端口，靠路径区分：
-      #   管理后台      http://<host>:8080/
-      #   webhook 接收  http://<host>:8080/hook/<路径标识>
+      #   管理后台      http://<host>:<宿主端口>/
+      #   webhook 接收  http://<host>:<宿主端口>/hook/<路径标识>
       # 这样新增接收源不需要改端口，也就不需要动 docker 配置。
-      - "8080:8080"
+      #
+      # 宿主端口可换（8080 常被别的服务占用）：W2A_HOST_PORT=9000 docker compose up -d
+      # 换的时候记得把 W2A_BASE_URL 一起改，否则生成的回调地址是错的。
+      - "${W2A_HOST_PORT:-8080}:8080"
 
     volumes:
       # 命名卷会继承镜像里 /data 的属主，非 root 用户开箱即可写。
@@ -19,6 +22,7 @@ services:
 
     environment:
       # 下面这些只在「首次启动」时写入数据库，之后一律以后台「设置」里的值为准。
+      # 容器内监听端口固定 8080，要换的是外面的 W2A_HOST_PORT。
       W2A_PORT: "8080"
       W2A_ADMIN_USER: "admin"
       # 故意不给默认密码。用 .env 文件或 shell 环境变量提供，例如：

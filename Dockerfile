@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/w2a ./cmd/w2a \
 # distroless static 自带 CA 证书（出站 HTTPS 要用），且没有 shell —— 攻击面小
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /w2a /w2a
+COPY --from=build /out/w2a /w2a
 # 提前把 /data 建出来并交给 nonroot，这样命名卷会继承属主、非 root 也能写
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 
