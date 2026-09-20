@@ -1,0 +1,87 @@
+/* 配色层。
+   app.css 只写结构、不写颜色，所有颜色都从这里取令牌。
+   想换外观有两个办法：
+     1. 换 layout.html 里那个 pico 文件名（配色、圆角、间距整套跟着变）；
+     2. 改这份文件里的令牌（只想调品牌色/状态色时用这个）。
+   这里的规则分两类，改的时候别混：
+     - 「跟主题走」的令牌全部指向 --pico-*，换 pico 文件就自动变；
+     - 「固定」的令牌是语义色（红必须一直是红、接收/发送/双向不能跟品牌混），
+       所以只锁色相，明度用 color-mix 往当前底色上靠，亮暗两套都成立。
+   需要 color-mix()（Chrome 111+ / Safari 16.2+ / Firefox 113+）。 */
+
+:root {
+  /* ---------- 骨架：跟主题走 ---------- */
+  --bg:          var(--pico-background-color);
+  --panel:       var(--pico-card-background-color);
+  --line:        var(--pico-card-border-color);
+  --line-strong: var(--pico-form-element-border-color);
+  --text:        var(--pico-color);
+  --muted:       var(--pico-muted-color);
+  /* 内嵌浅底：输入框、过滤条件行、re.body 这类「陷进去」的块 */
+  --surface-2:   var(--pico-form-element-background-color);
+  /* 更浅一档：hover、禁用、中性标签 */
+  --surface-3:   var(--pico-card-sectioning-background-color);
+  --row-hover:   var(--pico-table-row-stripped-background-color);
+
+  /* ---------- 品牌色：跟主题走，浅底由主题色混出来 ----------
+     用 color-mix 而不是写死浅蓝，是为了换主题时不残留上一套的底色。 */
+  --accent:      var(--pico-primary);
+  --accent-dark: var(--pico-primary-hover);
+  --on-accent:   var(--pico-primary-inverse);
+  --focus-ring:  color-mix(in srgb, var(--accent) 15%, transparent);
+  --accent-soft:   color-mix(in srgb, var(--accent) 9%,  var(--panel));
+  --accent-soft-2: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  --accent-line:   color-mix(in srgb, var(--accent) 34%, var(--panel));
+  /* 浅底上的品牌文字：往 --pico-contrast 混，亮色下变深、暗色下变浅 */
+  --accent-text:   color-mix(in srgb, var(--accent) 80%, var(--pico-contrast));
+
+  /* ---------- 说明块与行内代码 ---------- */
+  --note-bg:     var(--accent-soft);
+  --note-line:   var(--accent-line);
+  --note-bar:    color-mix(in srgb, var(--accent) 45%, var(--panel));
+  --note-text:   color-mix(in srgb, var(--text) 80%, var(--muted));
+  --note-strong: var(--text);
+  --code-bg:     var(--pico-code-background-color);
+  --code-text:   var(--accent-text);
+
+  /* ---------- 深色顶栏：固定，不跟主题 ----------
+     它是个预先做好的深色条，跟着主题变反而会花。 */
+  --invert-bg:    #1c2333;
+  --invert-hover: #2a3346;
+  --invert-text:  #e8eaf0;
+  --invert-muted: #b9c0cf;
+  --invert-line:  #3a4459;
+  --invert-soft:  #c8cede;
+
+  /* ---------- 用途语义色：接收=蓝 / 发送=绿 / 双向=紫 ----------
+     这是「哪个是入口、哪个是出口」的信息，不是品牌色，
+     跟主题变会让人看不懂，所以色相锁死；底色按当前底色混，亮暗都成立。 */
+  --use-in:   #3b74e8;
+  --use-out:  #17a05e;
+  --use-both: #7c4ddb;
+  --use-in-bg:   color-mix(in srgb, var(--use-in)   10%, var(--panel));
+  --use-out-bg:  color-mix(in srgb, var(--use-out)  10%, var(--panel));
+  --use-both-bg: color-mix(in srgb, var(--use-both) 10%, var(--panel));
+
+  /* ---------- 状态色：色相固定，明度跟主题 ----------
+     不用 Pico 的 --pico-ins-color / --pico-del-color：那两个是给 <ins>/<del> 用的，
+     成功色偏青，而且跟品牌色一样会随主题变 —— 但「红=失败」不能变。
+     所以色相自己定，只有明度跟着当前底色走。 */
+  --ok:   #1a7f4b;
+  --err:  #c02b2b;
+  --warn: #b07d10;
+  --ok-bg:   color-mix(in srgb, var(--ok)   14%, var(--panel));
+  --ok-line: color-mix(in srgb, var(--ok)   36%, var(--panel));
+  --ok-text: color-mix(in srgb, var(--ok)   78%, var(--pico-contrast));
+  --warn-bg:   color-mix(in srgb, var(--warn) 14%, var(--panel));
+  --warn-line: color-mix(in srgb, var(--warn) 36%, var(--panel));
+  --warn-text: color-mix(in srgb, var(--warn) 72%, var(--pico-contrast));
+  --err-bg:   color-mix(in srgb, var(--err)   13%, var(--panel));
+  --err-line: color-mix(in srgb, var(--err)   36%, var(--panel));
+  --err-text: color-mix(in srgb, var(--err)   78%, var(--pico-contrast));
+  --err-soft: color-mix(in srgb, var(--err)   22%, var(--panel));
+
+  /* ---------- 中性标签（未投递 / 已停用）---------- */
+  --neutral-bg:   var(--surface-3);
+  --neutral-text: var(--muted);
+}

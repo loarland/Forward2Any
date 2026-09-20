@@ -85,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 	// 兜底：其余路径都进后台，未登录会被重定向到登录页。
 	root.Handle("/", s.adminMux())
 
-	return s.logRequests(s.noStoreHTML(root))
+	return s.logRequests(s.noStoreHTML(gzipIfAccepted(root)))
 }
 
 // noStore 关掉浏览器缓存。

@@ -7,6 +7,13 @@
      在这里先把标记挂上去，CSS 才能从首屏起就对，不会先闪一下再换样。 */}}
 <script>document.documentElement.className += ' js';</script>
 <title>{{.Title}} · Forward2Any</title>
+{{/* 样式分三层，顺序不能换：
+       pico.min.css  底座 —— 表单/表格/排版的默认样式，也是主题色和亮暗两套配色的来源
+       theme.css     令牌 —— 把颜色收成 --x 变量，品牌色指向 --pico-*
+       app.css       结构 —— 只写布局和组件，颜色一律取令牌
+     换外观改前两个，第三个不用动。 */}}
+<link rel="stylesheet" href="/static/pico.min.css">
+<link rel="stylesheet" href="/static/theme.css">
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>
 <script src="/static/app.js" defer></script>

@@ -1,14 +1,6 @@
+/* 颜色令牌全部来自 theme.css —— 这份文件只写结构，不写颜色，
+   所以换配色不用动它。 */
 :root {
-  --bg: #f5f6f8;
-  --panel: #ffffff;
-  --line: #e2e5ea;
-  --text: #1f2430;
-  --muted: #6b7280;
-  --accent: #2f6feb;
-  --accent-dark: #2559c4;
-  --ok: #1a7f4b;
-  --warn: #9a6400;
-  --err: #c02b2b;
   --radius: 8px;
 }
 
@@ -41,9 +33,9 @@
   align-items: center;
   gap: 8px;
   padding: 11px 16px;
-  background: #f6f8fb;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
-  border-left: 4px solid #c8cfda;
+  border-left: 4px solid var(--line-strong);
   flex-wrap: wrap;
 }
 .source-head .source-name { font-weight: 600; font-size: 14.5px; margin-right: 2px; }
@@ -52,9 +44,9 @@
 .source-head .btn-group { display: flex; gap: 8px; flex: 0 0 auto; }
 .source-head .btn-group form { margin: 0; }
 
-.source-card.usage-in   .source-head { background: #eef4ff; border-left-color: #3b74e8; }
-.source-card.usage-out  .source-head { background: #eafaf1; border-left-color: #17a05e; }
-.source-card.usage-both .source-head { background: #f5efff; border-left-color: #7c4ddb; }
+.source-card.usage-in   .source-head { background: var(--use-in-bg); border-left-color: var(--use-in); }
+.source-card.usage-out  .source-head { background: var(--use-out-bg); border-left-color: var(--use-out); }
+.source-card.usage-both .source-head { background: var(--use-both-bg); border-left-color: var(--use-both); }
 
 .source-body { padding: 14px 16px; }
 .source-body > :first-child { margin-top: 0; }
@@ -70,7 +62,7 @@
   border-bottom-right-radius: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
-  background: #f7f8fa;
+  background: var(--surface-2);
 }
 .input-group button {
   flex: 0 0 auto;
@@ -139,12 +131,12 @@
   align-items: center;
   gap: 8px;
   padding: 8px;
-  background: #f7f8fa;
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 6px;
 }
 /* 正在改哪一行一眼可见 */
-.filter-row:focus-within { background: #fff; border-color: var(--accent); }
+.filter-row:focus-within { background: var(--panel); border-color: var(--accent); }
 /* 行号跟服务端「过滤器第 N 行」的报错对得上 */
 .filter-row .filter-idx {
   flex: 0 0 16px;
@@ -160,7 +152,7 @@
 .filter-row [data-f-op]    { flex: 0 0 128px; width: auto; }
 .filter-row [data-f-value] { flex: 1.4 1 200px; min-width: 0; }
 .filter-row [data-f-del]   { flex: 0 0 auto; }
-.filter-row.no-value [data-f-value] { background: #eef0f4; color: var(--muted); }
+.filter-row.no-value [data-f-value] { background: var(--surface-3); color: var(--muted); }
 .filter-row.invalid [data-f-path], .filter-row.invalid [data-f-value] { border-color: var(--err); }
 
 .filter-empty { margin: 2px 0 12px; font-size: 13px; }
@@ -191,7 +183,7 @@
   border-radius: var(--radius);
 }
 .filter-bar .lf-field { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 13px; }
-.filter-bar .lf-field > span { font-weight: 500; color: #333a48; }
+.filter-bar .lf-field > span { font-weight: 500; color: var(--text); }
 .filter-bar select { width: auto; min-width: 128px; }
 .filter-bar input[type=search] { flex: 1 1 200px; min-width: 170px; width: auto; }
 .filter-bar .lf-spacer { flex: 1 1 auto; }
@@ -235,27 +227,27 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   gap: 24px;
-  background: #1c2333;
-  color: #e8eaf0;
+  background: var(--invert-bg);
+  color: var(--invert-text);
   padding: 0 20px;
   height: 52px;
 }
 .topbar .brand {
   font-weight: 600;
   font-size: 15px;
-  color: #fff;
+  color: var(--invert-text);
   letter-spacing: .3px;
 }
 .topbar .brand:hover { text-decoration: none; }
 .topbar nav { display: flex; gap: 4px; flex: 1; }
 .topbar nav a {
-  color: #b9c0cf;
+  color: var(--invert-muted);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 13.5px;
 }
-.topbar nav a:hover { background: #2a3346; color: #fff; text-decoration: none; }
-.topbar nav a.active { background: var(--accent); color: #fff; }
+.topbar nav a:hover { background: var(--invert-hover); color: var(--invert-text); text-decoration: none; }
+.topbar nav a.active { background: var(--accent); color: var(--on-accent); }
 .topbar .logout { margin: 0; }
 
 /* ---------- 布局 ---------- */
@@ -297,38 +289,38 @@ main.narrow { max-width: 380px; padding-top: 12vh; }
 }
 .card .num { font-size: 26px; font-weight: 600; line-height: 1.2; }
 .card .lbl { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-.card.ok .num { color: var(--ok); }
-.card.err .num { color: var(--err); }
-.card.warn .num { color: var(--warn); }
+.card.ok .num { color: var(--ok-text); }
+.card.err .num { color: var(--err-text); }
+.card.warn .num { color: var(--warn-text); }
 
 /* ---------- 表格 ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowrap; }
 tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: #fafbfc; }
+tbody tr:hover { background: var(--row-hover); }
 td.nowrap, th.nowrap { white-space: nowrap; }
 td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
 .empty { text-align: center; color: var(--muted); padding: 32px 0; }
 
 /* ---------- 表单 ---------- */
-label { display: block; margin-bottom: 14px; font-size: 13px; color: #333a48; }
+label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--text); }
 label > span { display: block; margin-bottom: 5px; font-weight: 500; }
 label .hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 
 input[type=text], input[type=password], input[type=number], input[type=email], input[type=search], select, textarea {
   width: 100%;
   padding: 7px 10px;
-  border: 1px solid #ccd2db;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   font: inherit;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(47, 111, 235, .13);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; resize: vertical; }
 input[type=checkbox] { width: auto; margin-right: 6px; }
@@ -354,9 +346,9 @@ button, .btn {
   gap: 4px;
   min-height: 32px;
   padding: 0 14px;
-  border: 1px solid #ccd2db;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #f7f8fa;
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
   line-height: 1;
@@ -364,7 +356,7 @@ button, .btn {
   white-space: nowrap;
   text-decoration: none;
 }
-button:hover, .btn:hover { background: #eceff4; text-decoration: none; }
+button:hover, .btn:hover { background: var(--surface-3); text-decoration: none; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
 button.sm, .btn.sm { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
@@ -372,7 +364,7 @@ button.sm, .btn.sm { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
 button.primary, .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 button.primary:hover, .btn.primary:hover {
   background: var(--accent-dark);
@@ -381,24 +373,24 @@ button.primary:hover, .btn.primary:hover {
 
 /* 每个动作给一个底色：一排同色按钮在彩色头部上分不出主次，
    全是白底时又看不出哪些是按钮。 */
-button.test, .btn.test { background: #eaf1fd; border-color: #c3d5f8; color: #23478f; }
-button.test:hover, .btn.test:hover { background: #dbe7fb; }
+button.test, .btn.test { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+button.test:hover, .btn.test:hover { background: var(--accent-soft-2); }
 
-button.danger, .btn.danger { background: #fdeeee; border-color: #f0c6c6; color: var(--err); }
-button.danger:hover, .btn.danger:hover { background: #fadada; }
+button.danger, .btn.danger { background: var(--err-bg); border-color: var(--err-line); color: var(--err); }
+button.danger:hover, .btn.danger:hover { background: var(--err-soft); }
 
-button.ghost, .btn.ghost { background: transparent; border-color: #3a4459; color: #c8cede; }
-button.ghost:hover, .btn.ghost:hover { background: #2a3346; color: #fff; }
+button.ghost, .btn.ghost { background: transparent; border-color: var(--invert-line); color: var(--invert-soft); }
+button.ghost:hover, .btn.ghost:hover { background: var(--invert-hover); color: var(--invert-text); }
 
 /* 「添加一行」是长出新东西的入口，不是提交动作：虚线框 + 强调色文字，
    跟旁边那些实心动作按钮区分开。 */
 button.add, .btn.add {
-  background: #fff;
+  background: var(--panel);
   border-style: dashed;
-  border-color: #b9c2d0;
+  border-color: var(--line-strong);
   color: var(--accent);
 }
-button.add:hover, .btn.add:hover { background: #f2f6fe; border-color: var(--accent); }
+button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-color: var(--accent); }
 
 /* ---------- 消息与说明 ----------
    两套东西，别混：
@@ -407,29 +399,29 @@ button.add:hover, .btn.add:hover { background: #f2f6fe; border-color: var(--acce
    以前说明文字一会儿是裸段落、一会儿是 alert info、一会儿是 hint-block，
    同一个页面上三种长相，所以统一到这里。 */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13.5px; }
-.alert.ok { background: #eaf7ef; border: 1px solid #bfe3cd; color: #14663c; }
-.alert.err { background: #fdeeee; border: 1px solid #f0c6c6; color: #a52525; }
-.alert.warn { background: #fdf6e7; border: 1px solid #edd9a8; color: #7d5300; }
+.alert.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-text); }
+.alert.err { background: var(--err-bg); border: 1px solid var(--err-line); color: var(--err-text); }
+.alert.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-text); }
 
 .note {
   margin: 10px 0;
   padding: 9px 13px;
-  background: #f4f7fd;
-  border: 1px solid #dbe4f5;
+  background: var(--note-bg);
+  border: 1px solid var(--note-line);
   /* 左侧色条：跟 .alert 的整圈描边区分开，一眼看出「这是说明，不是报错」 */
-  border-left: 3px solid #93aede;
+  border-left: 3px solid var(--note-bar);
   border-radius: 6px;
   font-size: 12.5px;
   line-height: 1.8;
-  color: #4a5361;
+  color: var(--note-text);
 }
 .note > :first-child { margin-top: 0; }
 .note > :last-child { margin-bottom: 0; }
 .note:last-child { margin-bottom: 0; }
 .note p { margin: 0 0 8px; }
-.note strong { color: #2b323d; font-weight: 600; }
+.note strong { color: var(--note-strong); font-weight: 600; }
 /* 说明里常要嵌变量名/示例值，给它们一点对比，不然整段糊成一片 */
-.note .mono { color: #2f4571; background: #e8eefb; padding: 1px 5px; border-radius: 4px; }
+.note .mono { color: var(--code-text); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
 .note code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 /* 变量清单之类的对照表，只用在 .note 里面 */
@@ -444,20 +436,20 @@ button.add:hover, .btn.add:hover { background: #f2f6fe; border-color: var(--acce
   padding: 1px 8px;
   border-radius: 10px;
   font-size: 12px;
-  background: #eef1f5;
-  color: #4b5563;
+  background: var(--neutral-bg);
+  color: var(--muted);
   white-space: nowrap;
 }
-.tag.success { background: #e6f5ec; color: var(--ok); }
-.tag.failed { background: #fdeeee; color: var(--err); }
-.tag.dead { background: #f3e8e8; color: #8d2f2f; }
-.tag.pending { background: #eef1fd; color: #2b4a9e; }
-.tag.dropped { background: #f1f1f3; color: #62656b; }
-.tag.on { background: #e6f5ec; color: var(--ok); }
-.tag.off { background: #f1f1f3; color: #6b7280; }
+.tag.success { background: var(--ok-bg); color: var(--ok-text); }
+.tag.failed { background: var(--err-bg); color: var(--err-text); }
+.tag.dead { background: var(--err-bg); color: var(--err-text); }
+.tag.pending { background: var(--accent-soft); color: var(--accent-text); }
+.tag.dropped { background: var(--neutral-bg); color: var(--neutral-text); }
+.tag.on { background: var(--ok-bg); color: var(--ok-text); }
+.tag.off { background: var(--neutral-bg); color: var(--muted); }
 
 pre.body {
-  background: #f7f8fa;
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 12px;
@@ -470,7 +462,7 @@ pre.body {
 }
 
 .copy-row { display: flex; gap: 8px; align-items: center; }
-.copy-row input { flex: 1; background: #f7f8fa; }
+.copy-row input { flex: 1; background: var(--surface-2); }
 
 .login-card {
   background: var(--panel);
@@ -484,5 +476,5 @@ pre.body {
 
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 13px; }
 
-.picker { max-height: 210px; overflow: auto; border: 1px solid #ccd2db; border-radius: 6px; padding: 8px 10px; }
+.picker { max-height: 210px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 6px; padding: 8px 10px; }
 .picker label { margin-bottom: 4px; font-size: 13px; }

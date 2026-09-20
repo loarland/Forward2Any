@@ -1,16 +1,23 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/loarland/Forward2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/web/ui"
 )
 
 func TestIPAllowed(t *testing.T) {
@@ -408,5 +415,177 @@ func TestStaticAssetsRemainCacheable(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/static/app.css", nil))
 	if cc := rec.Header().Get("Cache-Control"); strings.Contains(cc, "no-store") {
 		t.Errorf("静态资源不该被设成 no-store，实际 %q", cc)
+	}
+}
+
+// ---------- gzip ----------
+
+// gunzip 解压响应体，顺便验证它确实是个完整的 gzip 流
+// （少写 Close 的话这里会报 unexpected EOF）。
+func gunzip(t *testing.T, body []byte) string {
+	t.Helper()
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("响应体不是 gzip 流：%v", err)
+	}
+	out, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("读取 gzip 流失败（多半是没 Close）：%v", err)
+	}
+	return string(out)
+}
+
+func gzipServer(t *testing.T, handler http.HandlerFunc, path, accept, rangeHdr string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	if accept != "" {
+		req.Header.Set("Accept-Encoding", accept)
+	}
+	if rangeHdr != "" {
+		req.Header.Set("Range", rangeHdr)
+	}
+	rec := httptest.NewRecorder()
+	gzipIfAccepted(handler).ServeHTTP(rec, req)
+	return rec
+}
+
+func TestGzipCompressesLargeBodyAndDropsContentLength(t *testing.T) {
+	big := strings.Repeat("换主题只改一个文件。", 200)
+	rec := gzipServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(big)))
+		w.Write([]byte(big))
+	}, "/x", "gzip, deflate", "")
+
+	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("应当压缩，实际 Content-Encoding=%q", got)
+	}
+	// 压缩后长度变了，Content-Length 必须摘掉，否则浏览器会按原长度读并截断。
+	if got := rec.Header().Get("Content-Length"); got != "" {
+		t.Errorf("压缩后不该还留着 Content-Length，实际 %q", got)
+	}
+	if got := gunzip(t, rec.Body.Bytes()); got != big {
+		t.Errorf("解压后内容不一致")
+	}
+}
+
+// 长度已知且很短就不压。
+//
+// 前提是「长度已知」：处理器没设 Content-Length 时（healthz、/hook/ 这类小响应），
+// 中间件在响应头定稿那一刻无从知道大小，会照压 —— 压完反而大几十字节，但 HTTP 语义
+// 完全正确。要避免就得先把响应体攒起来再决定，为这点收益不值得。
+func TestGzipSkipsSmallBodies(t *testing.T) {
+	rec := gzipServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "7")
+		w.Write([]byte("ok 200\n"))
+	}, "/healthz", "gzip", "")
+
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("小响应不该压，实际 Content-Encoding=%q", got)
+	}
+	if got := rec.Body.String(); got != "ok 200\n" {
+		t.Errorf("小响应应当原样返回，实际 %q", got)
+	}
+}
+
+func TestGzipSkipsWhenClientDoesNotAcceptIt(t *testing.T) {
+	big := strings.Repeat("x", 4096)
+	rec := gzipServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(big))
+	}, "/x", "", "")
+
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("客户端没要 gzip 就不该压，实际 %q", got)
+	}
+	if rec.Body.Len() != len(big) {
+		t.Errorf("body 应当原样返回，长度 %d，期望 %d", rec.Body.Len(), len(big))
+	}
+	// 但 Vary 必须写上，否则中间缓存会把压过的响应发给不要 gzip 的客户端。
+	if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+		t.Errorf("Vary 里应当有 Accept-Encoding，实际 %q", got)
+	}
+}
+
+// 静态文件走 http.ServeContent，它会设 Content-Length、也会处理 Range。
+// 这两条是最容易把响应写坏的地方，所以单独钉住。
+func TestGzipKeepsRangeRequestsIntact(t *testing.T) {
+	body := []byte(strings.Repeat("abcdefghij", 500))
+	rec := gzipServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "app.css", time.Time{}, bytes.NewReader(body))
+	}, "/static/app.css", "gzip", "bytes=0-9")
+
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("Range 请求不该压，实际 Content-Encoding=%q", got)
+	}
+	if rec.Code != http.StatusPartialContent {
+		t.Errorf("状态码应当是 206，实际 %d", rec.Code)
+	}
+	if got := rec.Body.String(); got != "abcdefghij" {
+		t.Errorf("Range 内容不对：%q", got)
+	}
+}
+
+func TestGzipSkipsBodylessStatuses(t *testing.T) {
+	for _, code := range []int{http.StatusNoContent, http.StatusNotModified} {
+		rec := gzipServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}, "/x", "gzip", "")
+		if got := rec.Header().Get("Content-Encoding"); got != "" {
+			t.Errorf("%d 不该有响应体，也就不该有 Content-Encoding，实际 %q", code, got)
+		}
+	}
+}
+
+// 静态资源真的能压下来，而且压完还能解回原样 —— 顺带守住 pico/theme 有没有被打进二进制。
+func TestGzipServesEmbeddedAssetsCompressed(t *testing.T) {
+	h := gzipIfAccepted(http.FileServerFS(ui.StaticFS))
+
+	for _, name := range []string{"app.css", "theme.css", "pico.min.css"} {
+		req := httptest.NewRequest("GET", "/static/"+name, nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s 应当能取到，实际 %d", name, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Fatalf("%s 应当被压缩，实际 Content-Encoding=%q", name, got)
+		}
+		plain := gunzip(t, rec.Body.Bytes())
+		if len(plain) <= rec.Body.Len() {
+			t.Errorf("%s 压完没变小：%d -> %d", name, len(plain), rec.Body.Len())
+		}
+		if !strings.Contains(plain, "--") {
+			t.Errorf("%s 的内容看起来不对", name)
+		}
+	}
+}
+
+// theme.css 是唯一一处写颜色的地方，令牌必须齐；app.css 里不该再出现字面量颜色。
+func TestThemeTokensCoverAppCSS(t *testing.T) {
+	app, err := ui.StaticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	theme, err := ui.StaticFS.ReadFile("static/theme.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 令牌可以定义在 theme.css（颜色）或 app.css（--radius 这种非颜色的）里。
+	defined := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(--[a-z0-9-]+):`).FindAllStringSubmatch(string(theme)+string(app), -1) {
+		defined[m[1]] = true
+	}
+	for _, m := range regexp.MustCompile(`var\((--[a-z0-9-]+)\)`).FindAllStringSubmatch(string(app), -1) {
+		if !defined[m[1]] {
+			t.Errorf("app.css 用了 theme.css 里没定义的令牌 %s", m[1])
+		}
+	}
+
+	// app.css 只写结构：除了 var(...) 之外不该有字面量颜色。
+	stripped := regexp.MustCompile(`var\(--[a-z0-9-]+\)`).ReplaceAllString(string(app), "")
+	if m := regexp.MustCompile(`#[0-9a-fA-F]{3,6}\b`).FindString(stripped); m != "" {
+		t.Errorf("app.css 里还有硬编码颜色 %s，应当挪到 theme.css", m)
 	}
 }
