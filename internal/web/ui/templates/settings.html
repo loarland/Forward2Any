@@ -50,22 +50,30 @@
   </div>
 </div>
 
-<div class="actions"><button class="primary" type="submit">保存设置</button></div>
+<div class="form-actions">
+  <button class="primary" type="submit">保存设置</button>
+  <span class="muted">改完记得保存</span>
+</div>
 </form>
 
 <div class="panel">
   <h2>配置导出 / 导入</h2>
   <div class="grid2">
     <div>
-      <div class="sub">把所有源与规则导出成 JSON，用于备份或换机器部署。</div>
+      <div class="field-label">导出</div>
+      <p class="hint-block">把所有源与规则导出成 JSON，用于备份或换机器部署。</p>
       <a class="btn" href="/settings/export">下载配置</a>
     </div>
     <div>
       <form method="post" action="/settings/import" enctype="multipart/form-data">
-        <input type="file" name="file" accept="application/json,.json" required>
-        <div class="actions">
-          <button class="danger" type="submit" hx-confirm="导入会用文件内容整体替换现有的全部源与规则，确定继续吗？">导入并替换</button>
-        </div>
+        <div class="field-label">导入</div>
+        <p class="hint-block">选择一份之前导出的 JSON 文件。</p>
+        <label class="file-field">
+          <input type="file" name="file" accept="application/json,.json">
+          <span class="btn">选择文件</span>
+          <span class="file-name" data-file-name>未选择文件</span>
+        </label>
+        <button class="danger" type="submit" hx-confirm="导入会用文件内容整体替换现有的全部源与规则，确定继续吗？">导入并替换</button>
       </form>
     </div>
   </div>

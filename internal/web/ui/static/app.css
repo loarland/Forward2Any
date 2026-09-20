@@ -81,6 +81,48 @@
   border-left: none;
 }
 
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}
+.form-actions .muted { font-size: 13px; }
+
+.hint-block { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+
+/* 原生 file 控件没法直接美化（那半个按钮是浏览器画的），所以把它藏起来、
+   用 label 里的 .btn 当触发器，再由 app.js 把选中的文件名显示出来。 */
+.file-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.file-field input[type=file] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.file-field .file-name {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .meta-line {
   display: flex;
   gap: 10px;

@@ -30,7 +30,23 @@
     }
   });
 
-  // 2) 复制回调地址。
+  // 2) 原生 file 控件被藏起来了，选完文件要把文件名显示到旁边。
+  document.addEventListener('change', function (e) {
+    var input = e.target;
+    if (!input || input.type !== 'file' || !input.closest) {
+      return;
+    }
+    var field = input.closest('.file-field');
+    if (!field) {
+      return;
+    }
+    var nameEl = field.querySelector('[data-file-name]');
+    if (nameEl) {
+      nameEl.textContent = input.files && input.files.length ? input.files[0].name : '未选择文件';
+    }
+  });
+
+  // 3) 复制回调地址。
   document.addEventListener('click', function (e) {
     if (!e.target || !e.target.closest) {
       return;
