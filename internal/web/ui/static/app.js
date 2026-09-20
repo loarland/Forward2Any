@@ -166,24 +166,31 @@
       }
     }
 
+    // 两种模式互斥，统一从这里切。之前初始化和点击各写一份显隐逻辑，
+    // 结果初始化只打开了可视化那半、忘了关掉文本框，新建规则时两个一起露出来。
+    function setMode(toText) {
+      visual.hidden = toText;
+      textBox.hidden = !toText;
+      modeBtn.textContent = toText ? '可视化模式' : '文本模式';
+    }
+
     // 初始化：把文本框里的内容铺成行。注意这里不回写 ta，
     // 否则注释和用户自己的排版在打开页面时就被抹掉了。
     fromText(ta.value);
     chrome();
-    visual.hidden = false;
+    setMode(false);
     modeBtn.hidden = false;
 
     modeBtn.addEventListener('click', function () {
       var toText = !visual.hidden;
-      visual.hidden = toText;
-      textBox.hidden = !toText;
-      modeBtn.textContent = toText ? '可视化模式' : '文本模式';
       if (toText) {
+        setMode(true);
         ta.focus();
         return;
       }
       fromText(ta.value);
       chrome();
+      setMode(false);
     });
 
     ta.addEventListener('input', function () {
