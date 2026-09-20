@@ -256,6 +256,30 @@ func TestRuleFromFormKeepsInputOnError(t *testing.T) {
 	}
 }
 
+// 翻页链接要带上生效的筛选条件，同时不把空条件也塞进 URL。
+func TestDeliveryPageURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		f       store.DeliveryFilter
+		keyword string
+		page    int
+		want    string
+	}{
+		{"没有筛选就只剩页码", store.DeliveryFilter{}, "", 3, "/deliveries?page=3"},
+		{"带状态", store.DeliveryFilter{Status: "dead"}, "", 2, "/deliveries?page=2&status=dead"},
+		{"带源和规则", store.DeliveryFilter{InSourceID: 7, RuleID: 9}, "", 1,
+			"/deliveries?page=1&rule=9&source=7"},
+		{"关键字要带上", store.DeliveryFilter{}, "飞书", 4, "/deliveries?page=4&q=%E9%A3%9E%E4%B9%A6"},
+		{"全都有", store.DeliveryFilter{Status: "failed", InSourceID: 1, RuleID: 2}, "a b", 5,
+			"/deliveries?page=5&q=a+b&rule=2&source=1&status=failed"},
+	}
+	for _, c := range cases {
+		if got := deliveryPageURL(c.f, c.keyword, c.page); got != c.want {
+			t.Errorf("%s: deliveryPageURL = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestValidateSourceShape(t *testing.T) {
 	base := func() *store.Source {
 		return &store.Source{

@@ -2,43 +2,47 @@
 <div class="page-head">
   <div>
     <h1>投递日志</h1>
-    <div class="sub">共 {{.Total}} 条记录</div>
+    <div class="sub">{{if .HasFilter}}筛选出 {{.Total}} 条{{else}}共 {{.Total}} 条记录{{end}}</div>
   </div>
   <a class="btn" href="/deliveries">刷新</a>
 </div>
 
-<div class="panel">
-  <form method="get" action="/deliveries" class="filters">
-    <label><span>状态</span>
-      <select name="status">
-        <option value="">全部</option>
-        <option value="pending" {{if eq .FStatus "pending"}}selected{{end}}>待投递</option>
-        <option value="success" {{if eq .FStatus "success"}}selected{{end}}>成功</option>
-        <option value="failed" {{if eq .FStatus "failed"}}selected{{end}}>失败</option>
-        <option value="dead" {{if eq .FStatus "dead"}}selected{{end}}>已放弃</option>
-        <option value="dropped" {{if eq .FStatus "dropped"}}selected{{end}}>已拦截</option>
-      </select>
-    </label>
-    <label><span>接收源</span>
-      <select name="source">
-        <option value="">全部</option>
-        {{$sel := .FSource}}
-        {{range .Sources}}<option value="{{.ID}}" {{if eq $sel .ID}}selected{{end}}>{{.Name}}</option>{{end}}
-      </select>
-    </label>
-    <label><span>规则</span>
-      <select name="rule">
-        <option value="">全部</option>
-        {{$rsel := .FRule}}
-        {{range .Rules}}<option value="{{.ID}}" {{if eq $rsel .ID}}selected{{end}}>{{.Name}}</option>{{end}}
-      </select>
-    </label>
+<form method="get" action="/deliveries" class="filter-bar">
+  <input type="search" name="q" value="{{.FKeyword}}" placeholder="搜索规则名、源名或追踪号…" autocomplete="off">
+  <label class="lf-field"><span>状态</span>
+    <select name="status">
+      <option value="">全部</option>
+      <option value="pending" {{if eq .FStatus "pending"}}selected{{end}}>待投递</option>
+      <option value="success" {{if eq .FStatus "success"}}selected{{end}}>成功</option>
+      <option value="failed" {{if eq .FStatus "failed"}}selected{{end}}>失败</option>
+      <option value="dead" {{if eq .FStatus "dead"}}selected{{end}}>已放弃</option>
+      <option value="dropped" {{if eq .FStatus "dropped"}}selected{{end}}>已拦截</option>
+    </select>
+  </label>
+  <label class="lf-field"><span>接收源</span>
+    <select name="source">
+      <option value="">全部</option>
+      {{$sel := .FSource}}
+      {{range .Sources}}<option value="{{.ID}}" {{if eq $sel .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label class="lf-field"><span>规则</span>
+    <select name="rule">
+      <option value="">全部</option>
+      {{$rsel := .FRule}}
+      {{range .Rules}}<option value="{{.ID}}" {{if eq $rsel .ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <span class="lf-actions">
     <button class="primary" type="submit">筛选</button>
-  </form>
-</div>
+    {{if .HasFilter}}<a class="btn" href="/deliveries">清除</a>{{end}}
+  </span>
+</form>
 
 {{if not .Items}}
-<div class="panel"><div class="empty">没有符合条件的投递记录。</div></div>
+<div class="panel"><div class="empty">
+  {{if .HasFilter}}没有符合条件的记录。<a href="/deliveries">清除筛选</a>看全部。{{else}}还没有投递记录。{{end}}
+</div></div>
 {{else}}
 <table class="panel">
   <thead>
@@ -72,9 +76,9 @@
 </table>
 
 <div class="pager">
-  {{if .HasPrev}}<a class="btn sm" href="/deliveries?page={{.PrevPage}}&status={{.FStatus}}&source={{.FSource}}&rule={{.FRule}}">上一页</a>{{end}}
+  {{if .HasPrev}}<a class="btn sm" href="{{.PrevURL}}">上一页</a>{{end}}
   <span class="muted">第 {{.Page}} 页</span>
-  {{if .HasNext}}<a class="btn sm" href="/deliveries?page={{.NextPage}}&status={{.FStatus}}&source={{.FSource}}&rule={{.FRule}}">下一页</a>{{end}}
+  {{if .HasNext}}<a class="btn sm" href="{{.NextURL}}">下一页</a>{{end}}
 </div>
 {{end}}
 {{end}}

@@ -250,6 +250,73 @@
     }
   })();
 
+  // 5) 列表筛选条（源、规则）。
+  //    这些列表本来就已经整份渲染在页面上了，所以直接在前端过滤，不发请求：
+  //    敲一个字就立刻见效。投递日志不走这里 —— 它的记录会一直涨、还要分页，
+  //    筛选取的是服务端那一套。
+  document.querySelectorAll('[data-list-filter]').forEach(function (bar) {
+    var rows = Array.prototype.slice.call(document.querySelectorAll('[data-row]'));
+    if (!rows.length) {
+      return;
+    }
+    var search = bar.querySelector('[data-lf-search]');
+    var selects = Array.prototype.slice.call(bar.querySelectorAll('select[data-lf]'));
+    var reset = bar.querySelector('[data-lf-reset]');
+    var count = bar.querySelector('[data-lf-count]');
+    var empty = document.querySelector('[data-lf-empty]');
+
+    function apply() {
+      var terms = (search ? search.value : '').toLowerCase().split(/\s+/).filter(Boolean);
+      var shown = 0;
+
+      rows.forEach(function (row) {
+        // 多个关键词是「都要出现」，跟搜索框的直觉一致。
+        var hay = (row.getAttribute('data-search') || '').toLowerCase();
+        var ok = terms.every(function (t) { return hay.indexOf(t) >= 0; });
+
+        if (ok) {
+          ok = selects.every(function (sel) {
+            var want = sel.value;
+            return !want || row.getAttribute('data-' + sel.getAttribute('data-lf')) === want;
+          });
+        }
+        row.hidden = !ok;
+        if (ok) {
+          shown++;
+        }
+      });
+
+      var filtering = terms.length > 0 || selects.some(function (s) { return s.value !== ''; });
+      if (count) {
+        count.textContent = filtering
+          ? '显示 ' + shown + ' / ' + rows.length + ' 条'
+          : '共 ' + rows.length + ' 条';
+      }
+      if (reset) {
+        reset.hidden = !filtering;
+      }
+      if (empty) {
+        empty.hidden = shown > 0;
+      }
+    }
+
+    bar.addEventListener('input', apply);
+    bar.addEventListener('change', apply);
+    if (reset) {
+      reset.addEventListener('click', function () {
+        if (search) {
+          search.value = '';
+        }
+        selects.forEach(function (s) { s.value = ''; });
+        apply();
+        if (search) {
+          search.focus();
+        }
+      });
+    }
+    apply();
+  });
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

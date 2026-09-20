@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{{/* 有些控件只在有 JS 时才有意义（列表筛选条、过滤条件行编辑器）。
+     在这里先把标记挂上去，CSS 才能从首屏起就对，不会先闪一下再换样。 */}}
+<script>document.documentElement.className += ' js';</script>
 <title>{{.Title}} · Forward2Any</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>

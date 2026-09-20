@@ -9,10 +9,48 @@
 
 {{if not .Rows}}
 <div class="panel"><div class="empty">还没有源。先建一个接收源，再到「规则」里配置转发。</div></div>
-{{end}}
+{{else}}
+
+{{/* 列表已经整份渲染出来了，筛选纯在前端做（见 app.js 第 5 段）。
+     没有 JS 时整条会被 CSS 藏掉，页面退化成不带筛选的完整列表。 */}}
+<div class="filter-bar" data-list-filter>
+  <input type="search" data-lf-search placeholder="搜索名称、路径、地址、收件人…" autocomplete="off">
+  <label class="lf-field"><span>类型</span>
+    <select data-lf="kind">
+      <option value="">全部</option>
+      <option value="webhook">Webhook</option>
+      <option value="email">邮件</option>
+    </select>
+  </label>
+  <label class="lf-field"><span>用途</span>
+    <select data-lf="usage">
+      <option value="">全部</option>
+      <option value="in">接收</option>
+      <option value="out">发送</option>
+      <option value="both">接收 + 发送</option>
+    </select>
+  </label>
+  <label class="lf-field"><span>状态</span>
+    <select data-lf="enabled">
+      <option value="">全部</option>
+      <option value="1">启用</option>
+      <option value="0">停用</option>
+    </select>
+  </label>
+  <button type="button" class="btn sm" data-lf-reset hidden>清除筛选</button>
+  <span class="lf-spacer"></span>
+  <span class="lf-count muted" data-lf-count></span>
+</div>
+
+<div class="panel" data-lf-empty hidden><div class="empty">没有匹配的源，换个关键词或者清除筛选。</div></div>
 
 {{range .Rows}}
-<div class="panel source-card usage-{{.Src.Usage}}">
+<div class="panel source-card usage-{{.Src.Usage}}"
+     data-row
+     data-kind="{{.Src.Kind}}"
+     data-usage="{{.Src.Usage}}"
+     data-enabled="{{if .Src.Enabled}}1{{else}}0{{end}}"
+     data-search="{{.Src.Name}} {{.Src.Slug}} {{.Src.URL}} {{.Src.MailTo}} {{.Src.IMAPUser}} {{.Src.IMAPHost}} {{kindText .Src.Kind}} {{usageText .Src.Usage}}">
 
   <div class="source-head">
     <span class="source-name">{{.Src.Name}}</span>
@@ -61,5 +99,6 @@
   </div>
 
 </div>
+{{end}}
 {{end}}
 {{end}}

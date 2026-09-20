@@ -309,6 +309,82 @@ func TestDueDeliveriesCoversPendingAndFailed(t *testing.T) {
 	}
 }
 
+// 关键字搜索要能命中 JOIN 出来的规则名和源名，并且 CountDeliveries 的条数
+// 必须和 ListDeliveries 一致 —— 统计那条 SQL 一旦漏掉 JOIN，这里就会炸。
+func TestDeliveryKeywordFilter(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	mkSource := func(name string) *Source {
+		src := &Source{Name: name, Kind: "webhook", Usage: "in", Enabled: true,
+			Slug: name, HTTPMethod: "POST", Headers: "{}", AuthMode: "none"}
+		if err := st.SaveSource(src); err != nil {
+			t.Fatal(err)
+		}
+		return src
+	}
+	in := mkSource("github-in")
+	out := mkSource("feishu-out")
+	rule := &Rule{Name: "推送到飞书", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID}}
+	if err := st.SaveRule(rule); err != nil {
+		t.Fatal(err)
+	}
+	other := &Rule{Name: "别的规则", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID}}
+	if err := st.SaveRule(other); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ruleID := range []int64{rule.ID, rule.ID, other.ID} {
+		d := &Delivery{RuleID: ruleID, InSourceID: in.ID, OutSourceID: out.ID,
+			Status: StatusSuccess, Payload: "x", TraceID: "trace-abc"}
+		if err := st.CreateDelivery(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name    string
+		keyword string
+		want    int
+	}{
+		{"空关键字不过滤", "", 3},
+		{"按规则名匹配", "飞书", 2},
+		{"按接收源名匹配", "github", 3},
+		{"按目标源名匹配", "feishu", 3},
+		{"按追踪号匹配", "trace-abc", 3},
+		{"匹配不到就是 0", "不存在的名字", 0},
+		// LIKE 的通配符必须被转义，否则搜 % 会命中一切。
+		{"百分号不是通配符", "%", 0},
+		{"下划线不是通配符", "_", 0},
+	}
+	for _, c := range cases {
+		f := DeliveryFilter{Keyword: c.keyword}
+		list, err := st.ListDeliveries(f)
+		if err != nil {
+			t.Fatalf("%s: 列表查询失败: %v", c.name, err)
+		}
+		n, err := st.CountDeliveries(f)
+		if err != nil {
+			t.Fatalf("%s: 统计失败: %v", c.name, err)
+		}
+		if len(list) != c.want || n != c.want {
+			t.Errorf("%s: keyword=%q 期望 %d 条，列表得到 %d、统计得到 %d",
+				c.name, c.keyword, c.want, len(list), n)
+		}
+	}
+
+	// 关键字和状态是 AND 关系。
+	f := DeliveryFilter{Keyword: "飞书", Status: StatusDead}
+	if n, _ := st.CountDeliveries(f); n != 0 {
+		t.Errorf("关键字叠加状态筛选应当同时生效，得到 %d 条", n)
+	}
+}
+
 // 日志清理只能删终态记录，未投递完成的必须留下。
 func TestCleanupKeepsUnfinishedDeliveries(t *testing.T) {
 	st, err := Open(t.TempDir())

@@ -44,14 +44,17 @@ type Delivery struct {
 	OutSourceName string
 }
 
-const deliverySelect = `SELECT d.id, d.trace_id, d.rule_id, d.in_source_id, d.out_source_id,
-	d.hop_chain, d.status, d.attempt, d.payload, d.rendered, d.subject, d.req_headers,
-	d.response_code, d.response_body, d.last_error, d.next_retry_at, d.created_at, d.updated_at,
-	COALESCE(r.name,''), COALESCE(si.name,''), COALESCE(so.name,'')
-	FROM deliveries d
+// deliveryFrom 是投递记录的统一数据源：列表、统计、筛选都要带上这几个 JOIN
+// （关键字搜索要按规则名 / 源名匹配），所以抽出来共用，免得统计那条漏掉 JOIN。
+const deliveryFrom = ` FROM deliveries d
 	LEFT JOIN rules r ON r.id = d.rule_id
 	LEFT JOIN sources si ON si.id = d.in_source_id
 	LEFT JOIN sources so ON so.id = d.out_source_id`
+
+const deliverySelect = `SELECT d.id, d.trace_id, d.rule_id, d.in_source_id, d.out_source_id,
+	d.hop_chain, d.status, d.attempt, d.payload, d.rendered, d.subject, d.req_headers,
+	d.response_code, d.response_body, d.last_error, d.next_retry_at, d.created_at, d.updated_at,
+	COALESCE(r.name,''), COALESCE(si.name,''), COALESCE(so.name,'')` + deliveryFrom
 
 func scanDelivery(sc interface{ Scan(...any) error }) (*Delivery, error) {
 	var v Delivery
@@ -114,9 +117,14 @@ type DeliveryFilter struct {
 	Status     string
 	InSourceID int64
 	RuleID     int64
-	Limit      int
-	Offset     int
+	// Keyword 在规则名、接收源名、目标源名和追踪号里做模糊匹配。
+	Keyword string
+	Limit   int
+	Offset  int
 }
+
+// likeEscape 转义 LIKE 的通配符（% 和 _），反斜杠自己要先转。
+var likeEscape = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func (f DeliveryFilter) where() (string, []any) {
 	var conds []string
@@ -132,6 +140,14 @@ func (f DeliveryFilter) where() (string, []any) {
 	if f.RuleID != 0 {
 		conds = append(conds, `d.rule_id = ?`)
 		args = append(args, f.RuleID)
+	}
+	if f.Keyword != "" {
+		// SQLite 的 LIKE 对 ASCII 本来就不区分大小写。
+		// % 和 _ 在 LIKE 里是通配符，用户输入里带了就得转义，不然搜「100%」会命中一切。
+		like := "%" + likeEscape.Replace(f.Keyword) + "%"
+		conds = append(conds, `(r.name LIKE ? ESCAPE '\' OR si.name LIKE ? ESCAPE '\'`+
+			` OR so.name LIKE ? ESCAPE '\' OR d.trace_id LIKE ? ESCAPE '\')`)
+		args = append(args, like, like, like, like)
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -166,8 +182,8 @@ func (s *Store) ListDeliveries(f DeliveryFilter) ([]*Delivery, error) {
 func (s *Store) CountDeliveries(f DeliveryFilter) (int, error) {
 	where, args := f.where()
 	var n int
-	// 统计不关心分页。
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM deliveries d`+where, args...).Scan(&n)
+	// 统计不关心分页，但 WHERE 里可能引用 JOIN 出来的名字，所以 FROM 必须一致。
+	err := s.db.QueryRow(`SELECT COUNT(*)`+deliveryFrom+where, args...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("统计投递记录: %w", err)
 	}

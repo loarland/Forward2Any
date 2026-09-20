@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/loarland/Forward2Any/internal/store"
 )
@@ -25,10 +27,12 @@ func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
+	keyword := strings.TrimSpace(q.Get("q"))
 	f := store.DeliveryFilter{
-		Status: q.Get("status"),
-		Limit:  deliveriesPerPage,
-		Offset: (page - 1) * deliveriesPerPage,
+		Status:  q.Get("status"),
+		Keyword: keyword,
+		Limit:   deliveriesPerPage,
+		Offset:  (page - 1) * deliveriesPerPage,
 	}
 	if v, err := strconv.ParseInt(q.Get("source"), 10, 64); err == nil {
 		f.InSourceID = v
@@ -58,22 +62,48 @@ func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 翻页链接只带上真正生效的筛选条件，不然 URL 里会挂一串 status=&source=0&rule=0。
+	pageURL := func(p int) string { return deliveryPageURL(f, keyword, p) }
+
 	s.render(w, r, "deliveries", map[string]any{
-		"Title":    "投递日志",
-		"Nav":      "deliveries",
-		"Items":    items,
-		"Total":    total,
-		"Page":     page,
-		"HasPrev":  page > 1,
-		"HasNext":  page*deliveriesPerPage < total,
-		"PrevPage": page - 1,
-		"NextPage": page + 1,
-		"Sources":  sources,
-		"Rules":    rules,
-		"FStatus":  f.Status,
-		"FSource":  f.InSourceID,
-		"FRule":    f.RuleID,
+		"Title":     "投递日志",
+		"Nav":       "deliveries",
+		"Items":     items,
+		"Total":     total,
+		"Page":      page,
+		"HasPrev":   page > 1,
+		"HasNext":   page*deliveriesPerPage < total,
+		"PrevURL":   pageURL(page - 1),
+		"NextURL":   pageURL(page + 1),
+		"Sources":   sources,
+		"Rules":     rules,
+		"FStatus":   f.Status,
+		"FSource":   f.InSourceID,
+		"FRule":     f.RuleID,
+		"FKeyword":  keyword,
+		"HasFilter": f.Status != "" || f.InSourceID != 0 || f.RuleID != 0 || keyword != "",
 	})
+}
+
+// deliveryPageURL 构造投递日志的翻页链接。只带上真正生效的筛选条件，
+// 不然 URL 里会挂一串 status=&source=0&rule=0；关键字也必须带过去，
+// 否则翻到第二页筛选就悄悄丢了。
+func deliveryPageURL(f store.DeliveryFilter, keyword string, page int) string {
+	v := url.Values{}
+	if f.Status != "" {
+		v.Set("status", f.Status)
+	}
+	if f.InSourceID != 0 {
+		v.Set("source", strconv.FormatInt(f.InSourceID, 10))
+	}
+	if f.RuleID != 0 {
+		v.Set("rule", strconv.FormatInt(f.RuleID, 10))
+	}
+	if keyword != "" {
+		v.Set("q", keyword)
+	}
+	v.Set("page", strconv.Itoa(page))
+	return "/deliveries?" + v.Encode()
 }
 
 func (s *Server) handleDeliveryDetail(w http.ResponseWriter, r *http.Request) {

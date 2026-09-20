@@ -14,6 +14,31 @@
 {{if not .Rows}}
 <div class="panel"><div class="empty">还没有规则。规则决定「哪些源收到的消息，转发到哪些源」。</div></div>
 {{else}}
+
+{{/* 与「源」页同一套：列表已在页面里，筛选纯前端做，没 JS 时整条藏掉。 */}}
+<div class="filter-bar" data-list-filter>
+  <input type="search" data-lf-search placeholder="搜索规则名或它两端的源…" autocomplete="off">
+  <label class="lf-field"><span>状态</span>
+    <select data-lf="enabled">
+      <option value="">全部</option>
+      <option value="1">启用</option>
+      <option value="0">停用</option>
+    </select>
+  </label>
+  <label class="lf-field"><span>过滤条件</span>
+    <select data-lf="filters">
+      <option value="">全部</option>
+      <option value="0">无（全部转发）</option>
+      <option value="1">有</option>
+    </select>
+  </label>
+  <button type="button" class="btn sm" data-lf-reset hidden>清除筛选</button>
+  <span class="lf-spacer"></span>
+  <span class="lf-count muted" data-lf-count></span>
+</div>
+
+<div class="panel" data-lf-empty hidden><div class="empty">没有匹配的规则，换个关键词或者清除筛选。</div></div>
+
 <table class="panel">
   <thead>
     <tr>
@@ -28,7 +53,10 @@
   </thead>
   <tbody>
     {{range .Rows}}
-    <tr>
+    <tr data-row
+        data-enabled="{{if .Rule.Enabled}}1{{else}}0{{end}}"
+        data-filters="{{if .Rule.Filters}}1{{else}}0{{end}}"
+        data-search="{{.Rule.Name}} {{join .From " "}} {{join .To " "}}">
       <td><a href="/rules/{{.Rule.ID}}/edit">{{.Rule.Name}}</a></td>
       <td>{{range $i, $n := .From}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
       <td class="muted">→</td>

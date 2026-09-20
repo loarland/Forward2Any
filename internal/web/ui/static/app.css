@@ -164,6 +164,35 @@
   .filter-row [data-f-value] { flex: 1 1 auto; }
 }
 
+/* ---------- 列表筛选条 ----------
+   投递日志是服务端筛选（记录会一直涨、还要分页），源和规则是客户端筛选
+   （列表本来就已经整份渲染出来了，再跑一趟服务端没意义）。
+   两边长得一样，所以样式共用；差别只在 [data-list-filter] 那几条。 */
+.filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.filter-bar .lf-field { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 13px; }
+.filter-bar .lf-field > span { font-weight: 500; color: #333a48; }
+.filter-bar select { width: auto; min-width: 128px; }
+.filter-bar input[type=search] { flex: 1 1 200px; min-width: 170px; width: auto; }
+.filter-bar .lf-spacer { flex: 1 1 auto; }
+.filter-bar .lf-actions { display: flex; gap: 8px; align-items: center; }
+.filter-bar .lf-count { font-size: 12.5px; white-space: nowrap; padding-bottom: 7px; }
+.filter-bar .lf-actions button, .filter-bar .lf-actions .btn { min-height: 32px; }
+
+/* 客户端筛选条没有服务端兜底，没 JS 时整条藏掉，免得摆一排点不动的控件。
+   这条必须排在 .filter-bar 后面，两者特异度相同，靠顺序分胜负。 */
+[data-list-filter] { display: none; }
+.js [data-list-filter] { display: flex; }
+
 .meta-line {
   display: flex;
   gap: 10px;
@@ -276,7 +305,7 @@ label { display: block; margin-bottom: 14px; font-size: 13px; color: #333a48; }
 label > span { display: block; margin-bottom: 5px; font-weight: 500; }
 label .hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 
-input[type=text], input[type=password], input[type=number], input[type=email], select, textarea {
+input[type=text], input[type=password], input[type=number], input[type=email], input[type=search], select, textarea {
   width: 100%;
   padding: 7px 10px;
   border: 1px solid #ccd2db;
@@ -402,9 +431,6 @@ pre.body {
 .login-card button { width: 100%; margin-top: 4px; }
 
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 13px; }
-.filters { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-.filters label { margin-bottom: 0; }
-.filters select, .filters input { min-width: 130px; }
 
 .picker { max-height: 210px; overflow: auto; border: 1px solid #ccd2db; border-radius: 6px; padding: 8px 10px; }
 .picker label { margin-bottom: 4px; font-size: 13px; }

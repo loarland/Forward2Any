@@ -252,6 +252,30 @@ grep -q '{{.Payload.action}}' "$WORK/rule_err.html" || fail "校验失败后报�
 grep -q '这一行是坏的' "$WORK/rule_err.html" || fail "校验失败后用户写的过滤文本被丢掉了"
 pass "规则表单校验失败后会整张回填"
 
+# 列表页的筛选条：源和规则是客户端筛选（列表已在页面里），投递日志是服务端筛选。
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$WORK/sources_list.html"
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules" > "$WORK/rules_list.html"
+for f in sources_list rules_list; do
+  grep -q 'data-list-filter' "$WORK/$f.html" || fail "$f 缺少筛选条"
+  grep -q 'data-lf-search' "$WORK/$f.html" || fail "$f 缺少搜索框"
+  grep -q 'data-row' "$WORK/$f.html" || fail "$f 的行没有打上 data-row 标记"
+  grep -q 'data-lf-count' "$WORK/$f.html" || fail "$f 缺少结果计数"
+done
+grep -q 'data-kind="webhook"' "$WORK/sources_list.html" || fail "源的行上没有类型属性，筛选没法生效"
+grep -q 'data-enabled="1"' "$WORK/rules_list.html" || fail "规则的行上没有状态属性，筛选没法生效"
+pass "源 / 规则的筛选条与行标记都渲染出来了"
+
+# 投递日志的关键字搜索走服务端（记录会一直涨、还要分页），得真查一次库。
+curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=mock" "$BASE/deliveries" > "$WORK/dl_hit.html"
+curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=根本没有这个名字" "$BASE/deliveries" > "$WORK/dl_miss.html"
+grep -q "转发到 mock" "$WORK/dl_hit.html" || fail "按规则名搜索投递日志没有命中"
+grep -q "筛选出" "$WORK/dl_hit.html" || fail "筛选后页头没有显示筛选状态"
+grep -q "/deliveries/1" "$WORK/dl_miss.html" && fail "搜不到东西时不该还列出记录"
+grep -q "没有符合条件的记录" "$WORK/dl_miss.html" || fail "搜不到时没有给出空状态提示"
+# 搜索框要把关键字带回来，不然一翻页/一刷新就白搜了
+grep -q 'name="q" value="mock"' "$WORK/dl_hit.html" || fail "搜索框没有回填关键字"
+pass "投递日志的关键字搜索与空状态正常"
+
 # 未登录访问后台必须被重定向到登录页
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/settings")
 [ "$code" = "303" ] || fail "未登录访问后台应重定向，实际 $code"
