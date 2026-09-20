@@ -85,6 +85,9 @@
     <span class="mono">.Headers</span>（入站请求头）、
     <span class="mono">.TraceID</span>、
     <span class="mono">.Now</span>
+    <br>
+    模板里取数组元素要用 <span class="mono">&#123;&#123;index .Payload.commits 0&#125;&#125;</span>，
+    不能像过滤器那样写 <span class="mono">.commits.0</span>（那是过滤器的语法，模板里会报语法错）。
   </div>
 </div>
 

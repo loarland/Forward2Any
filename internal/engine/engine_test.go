@@ -496,3 +496,82 @@ func TestSubmitSkipsDisabledTarget(t *testing.T) {
 		t.Errorf("停用的目标源不该产生投递，实际 %d 条", n)
 	}
 }
+
+// 校验模板时绝不能拿假数据去执行：引用真实字段的模板必须能通过，
+// 否则用户写对了却被拒绝（曾经就是这样，模板功能等于废掉）。
+func TestValidateTemplateAcceptsRealFieldReferences(t *testing.T) {
+	good := []string{
+		`{{.Payload.repository.full_name}}`,
+		`{{len .Payload.commits}} 个提交`,
+		`{{range .Payload.commits}}{{.message}}{{end}}`,
+		`{{index .Payload.commits 0}}`,
+		`{{(index .Payload.commits 0).message}}`,
+		`{{.Source.name}} / {{.Source.slug}}`,
+		`{{index .Headers "Content-Type"}}`,
+		`{{.Raw}}`,
+		`{{.Now}}`,
+		``,
+		`    `,
+	}
+	for _, s := range good {
+		if err := ValidateTemplate("报文", s); err != nil {
+			t.Errorf("模板 %q 语法没问题，不该被拒: %v", s, err)
+		}
+	}
+
+	bad := []string{
+		`{{.Payload.`,
+		`{{range}}`,
+		`{{if .A}}`,
+		`{{end}}`,
+	}
+	for _, s := range bad {
+		if err := ValidateTemplate("报文", s); err == nil {
+			t.Errorf("模板 %q 语法有错，应当被拒", s)
+		}
+	}
+}
+
+func TestValidateHeaderTemplates(t *testing.T) {
+	// 合法：JSON 对象，值里可以引用任意字段
+	if err := ValidateHeaderTemplates(`{"X-Source":"{{.Source.slug}}","X-Repo":"{{.Payload.repository.full_name}}"}`); err != nil {
+		t.Errorf("合法请求头模板不该被拒: %v", err)
+	}
+	// 空与 {} 都表示「不配置」
+	for _, s := range []string{"", "{}", "   "} {
+		if err := ValidateHeaderTemplates(s); err != nil {
+			t.Errorf("%q 应当视为不配置: %v", s, err)
+		}
+	}
+	// 不是 JSON 对象
+	for _, s := range []string{`["a"]`, `{bad}`, `{{.A}}`} {
+		if err := ValidateHeaderTemplates(s); err == nil {
+			t.Errorf("%q 不是 JSON 对象，应当被拒", s)
+		}
+	}
+	// 值里的模板语法有错
+	if err := ValidateHeaderTemplates(`{"X-A":"{{.B."}`); err == nil {
+		t.Error("值里模板语法有错，应当被拒")
+	}
+}
+
+// 模板里写 .commits.0 是语法错误（Go 模板要用 index），
+// 而这个写法在过滤器里是合法的，所以报错必须给出可操作的提示，
+// 不能只丢一句 unexpected ".1" in operand。
+func TestValidateTemplateHintsArrayIndexSyntax(t *testing.T) {
+	err := ValidateTemplate("报文", `{{.Payload.commits.0.message}}`)
+	if err == nil {
+		t.Fatal("这个写法在 Go 模板里是语法错误，应当被拒")
+	}
+	if !strings.Contains(err.Error(), "index") {
+		t.Errorf("报错应当提示改用 index，实际：%v", err)
+	}
+}
+
+// 请求头模板里值引用深层字段也必须能保存（同样是假数据校验会误杀的场景）
+func TestValidateHeaderTemplatesAllowsDeepFields(t *testing.T) {
+	err := ValidateHeaderTemplates(`{"X-Repo":"{{.Payload.repository.full_name}}","X-Id":"{{index .Payload.commits 0}}"}`)
+	if err != nil {
+		t.Errorf("引用真实字段的请求头模板不该被拒: %v", err)
+	}
+}

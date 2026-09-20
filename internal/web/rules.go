@@ -268,34 +268,21 @@ func (s *Server) ruleFromForm(r *http.Request) (*store.Rule, error) {
 	if strings.TrimSpace(rule.HeadersTemplate) == "" {
 		rule.HeadersTemplate = "{}"
 	}
-	var hdrs map[string]string
-	if err := json.Unmarshal([]byte(rule.HeadersTemplate), &hdrs); err != nil {
-		return rule, errors.New(`请求头模板必须是 JSON 对象，例如 {"X-Token":"{{.Source.slug}}"} `)
-	}
-	// 模板语法错误提前暴露，别等到真来了请求才发现。
-	if _, err := engine.RenderBody(rule.BodyTemplate, sampleTemplateData()); err != nil {
+	// 模板问题在保存时就报出来，别等到真来了请求才发现。
+	// 注意这里只校验语法，不拿假 payload 去执行 —— 见 engine.ValidateTemplate 的说明。
+	if err := engine.ValidateTemplate("报文", rule.BodyTemplate); err != nil {
 		return rule, err
 	}
-	if _, err := engine.RenderSubject(rule.SubjectTemplate, sampleTemplateData()); err != nil {
+	if err := engine.ValidateTemplate("主题", rule.SubjectTemplate); err != nil {
 		return rule, err
 	}
-	if _, err := engine.RenderHeaders(rule.HeadersTemplate, sampleTemplateData(), nil); err != nil {
+	if err := engine.ValidateHeaderTemplates(rule.HeadersTemplate); err != nil {
 		return rule, err
 	}
 	return rule, nil
 }
 
 // sampleTemplateData 只用在校验模板语法，内容无所谓。
-func sampleTemplateData() *engine.TemplateData {
-	return &engine.TemplateData{
-		Payload: map[string]any{"example": "value"},
-		Raw:     `{"example":"value"}`,
-		Source:  map[string]any{"id": int64(1), "name": "示例源", "slug": "demo", "kind": "webhook"},
-		Headers: map[string]string{},
-		TraceID: "test",
-	}
-}
-
 func idSet(ids []int64) map[int64]bool {
 	out := make(map[int64]bool, len(ids))
 	for _, id := range ids {

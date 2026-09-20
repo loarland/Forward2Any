@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -46,6 +47,49 @@ func parse(name, text string) (*template.Template, error) {
 		return nil, fmt.Errorf("%s模板语法错误: %w", name, err)
 	}
 	return t, nil
+}
+
+// 过滤器里的路径支持 commits.0.id 这种数字下标（那是我们自己解析的），
+// 但 Go 模板不支持，必须写 index。从过滤器那边顺过来的写法很容易踩这个坑。
+var numericIndex = regexp.MustCompile(`\.[0-9]+`)
+
+// ValidateTemplate 只检查模板语法，不执行它。
+//
+// 保存规则时不能拿一份假 payload 去执行模板：任何引用真实字段的写法
+// （比如 .Payload.repository.full_name）都会因为假数据里没有这个字段而报
+// "nil pointer evaluating interface {}"，用户明明写对了却被拒绝，
+// 等于把模板功能废掉。执行期的取值错误只能等真实报文到了才知道，
+// 那时由 Submit 记日志并跳过该目标，不影响其它投递。
+func ValidateTemplate(name, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if _, err := parse(name, text); err != nil {
+		if numericIndex.MatchString(text) {
+			return fmt.Errorf("%w（提示：模板里的数组下标要写 {{index .Payload.commits 0}}，"+
+				"不能像过滤器那样写 .commits.0）", err)
+		}
+		return err
+	}
+	return nil
+}
+
+// ValidateHeaderTemplates 校验请求头模板：必须是 JSON 对象，且每个值的模板语法正确。
+func ValidateHeaderTemplates(tmplJSON string) error {
+	trimmed := strings.TrimSpace(tmplJSON)
+	if trimmed == "" || trimmed == "{}" {
+		return nil
+	}
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(tmplJSON), &raw); err != nil {
+		return fmt.Errorf(`请求头模板必须是 JSON 对象，例如 {"X-Token":"{{.Source.slug}}"}`)
+	}
+	for k, v := range raw {
+		if err := ValidateTemplate("请求头 "+k, v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenderBody 渲染出站报文体。模板为空表示原样透传入站报文。
