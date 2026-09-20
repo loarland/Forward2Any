@@ -36,7 +36,7 @@
       <td class="nowrap">{{len .Rule.Filters}} 条</td>
       <td><span class="tag {{if .Rule.Enabled}}on{{else}}off{{end}}">{{if .Rule.Enabled}}启用{{else}}停用{{end}}</span></td>
       <td class="nowrap">
-        <a href="/rules/{{.Rule.ID}}/edit">编辑</a>
+        <a class="btn sm" href="/rules/{{.Rule.ID}}/edit">编辑</a>
         <form method="post" action="/rules/{{.Rule.ID}}/delete" style="display:inline">
           <button class="sm danger" type="submit" hx-confirm="确定删除规则「{{.Rule.Name}}」吗？">删除</button>
         </form>

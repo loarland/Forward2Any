@@ -23,7 +23,7 @@
     <span class="btn-group">
       {{if .Src.CanSend}}
       <form method="post" action="/sources/{{.Src.ID}}/test">
-        <button class="sm" type="submit" title="往这个目标发一条测试消息">发送测试</button>
+        <button class="sm test" type="submit" title="往这个目标发一条测试消息">发送测试</button>
       </form>
       {{end}}
       <a class="btn sm" href="/sources/{{.Src.ID}}/edit">编辑</a>

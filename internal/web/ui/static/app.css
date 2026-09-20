@@ -62,7 +62,7 @@
 .field-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 
 /* 输入框和「复制」贴在一起，明确是一组，不会飘到最右边看起来像第四个按钮 */
-.input-group { display: flex; max-width: 640px; margin-bottom: 4px; }
+.input-group { display: flex; align-items: stretch; max-width: 640px; margin-bottom: 4px; }
 .input-group input {
   flex: 1 1 auto;
   min-width: 0;
@@ -74,6 +74,8 @@
 }
 .input-group button {
   flex: 0 0 auto;
+  /* 跟随输入框高度，不然按钮会比输入框矮一截 */
+  align-self: stretch;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: none;
@@ -218,24 +220,52 @@ input[type=checkbox] { width: auto; margin-right: 6px; }
 .actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
 .actions .spacer { flex: 1; }
 
+/* ---------- 按钮 ----------
+   <button> 和 <a class="btn"> 必须长得一模一样，所以统一用 flex + min-height 定尺寸，
+   不靠各自的 padding —— 之前只写了 button.sm，于是 <a class="btn sm"> 的「编辑」
+   不匹配那条规则、比旁边两个按钮大一圈。选择器一律两种都写上。 */
 button, .btn {
-  padding: 7px 14px;
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 14px;
   border: 1px solid #ccd2db;
-  background: #fff;
+  border-radius: 6px;
+  background: #f7f8fa;
   color: var(--text);
   font: inherit;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
 }
-button:hover, .btn:hover { background: #f2f4f7; text-decoration: none; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.primary:hover { background: var(--accent-dark); }
-button.danger { color: var(--err); border-color: #edc6c6; }
-button.danger:hover { background: #fdf2f2; }
-button.ghost { background: transparent; border-color: #3a4459; color: #c8cede; }
-button.ghost:hover { background: #2a3346; color: #fff; }
-button.sm { padding: 3px 9px; font-size: 12.5px; }
+button:hover, .btn:hover { background: #eceff4; text-decoration: none; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+button.sm, .btn.sm { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
+
+button.primary, .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover, .btn.primary:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+
+/* 每个动作给一个底色：一排同色按钮在彩色头部上分不出主次，
+   全是白底时又看不出哪些是按钮。 */
+button.test, .btn.test { background: #eaf1fd; border-color: #c3d5f8; color: #23478f; }
+button.test:hover, .btn.test:hover { background: #dbe7fb; }
+
+button.danger, .btn.danger { background: #fdeeee; border-color: #f0c6c6; color: var(--err); }
+button.danger:hover, .btn.danger:hover { background: #fadada; }
+
+button.ghost, .btn.ghost { background: transparent; border-color: #3a4459; color: #c8cede; }
+button.ghost:hover, .btn.ghost:hover { background: #2a3346; color: #fff; }
 
 /* ---------- 提示 ---------- */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13.5px; }
