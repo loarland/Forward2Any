@@ -49,18 +49,58 @@
 
 <div class="panel">
   <h2>过滤条件</h2>
-  <label>
-    <span>一行一条，全部满足才转发；留空表示全部转发</span>
-    <textarea name="filters" rows="6" placeholder="action eq push&#10;repository.private eq false&#10;commits.0.message contains [skip]">{{.FilterText}}</textarea>
-  </label>
-  <div class="sub">
-    格式：<span class="mono">路径 操作符 值</span>。路径用点分隔，数字段表示数组下标（如 <span class="mono">commits.0.id</span>）。
-    <br>
-    操作符：<span class="mono">eq</span>、<span class="mono">ne</span>、<span class="mono">gt</span>、<span class="mono">lt</span>、<span class="mono">contains</span>、<span class="mono">not_contains</span>、<span class="mono">exists</span>、<span class="mono">not_exists</span>、<span class="mono">regex</span>、<span class="mono">in</span>。
-    <br>
-    值按 JSON 解析，所以 <span class="mono">true</span>、<span class="mono">123</span>、<span class="mono">[1,2]</span> 都写得出来；裸词（如 <span class="mono">push</span>）当作字符串。
-    以 <span class="mono">#</span> 开头的行是注释。
+
+  {{/* 这里真正提交的是那个文本框（一行一条的文本格式），可视化编辑器只是它的一个视图：
+       改行会重写文本框，反之亦然。所以没有 JS 时页面照旧能用，服务端也不用认第二种格式。 */}}
+  <div class="filter-editor" data-filter-editor>
+    <div class="filter-head">
+      <span class="muted">全部条件都满足才转发；不添加条件时所有消息都会被转发</span>
+      <button type="button" class="btn sm" data-filter-mode hidden>文本模式</button>
+    </div>
+
+    <div class="filter-visual" data-filter-visual hidden>
+      <div class="filter-rows" data-filter-rows></div>
+      <div class="filter-empty muted" data-filter-empty>还没有条件</div>
+      <div class="filter-add">
+        <button type="button" class="btn sm" data-filter-add>+ 添加条件</button>
+      </div>
+      <div class="alert err" data-filter-error hidden></div>
+    </div>
+
+    <div class="filter-text" data-filter-text>
+      <textarea name="filters" rows="6" placeholder="action eq push&#10;repository.private eq false&#10;commits.0.message contains [skip]">{{.FilterText}}</textarea>
+      <div class="sub">
+        格式：<span class="mono">路径 操作符 值</span>，一行一条。
+        以 <span class="mono">#</span> 开头的行是注释（注释只在文本模式下保留）。
+      </div>
+    </div>
+
+    <div class="sub">
+      路径用点分隔，数字段表示数组下标（如 <span class="mono">commits.0.id</span>）。
+      值按 JSON 解析，所以 <span class="mono">true</span>、<span class="mono">123</span>、<span class="mono">[1,2]</span> 是布尔、数字、数组，
+      裸词（如 <span class="mono">push</span>）当字符串。
+    </div>
   </div>
+
+  <template data-filter-row-tpl>
+    <div class="filter-row">
+      <input type="text" data-f-path placeholder="路径，如 repository.private" autocomplete="off">
+      <select data-f-op>
+        <option value="eq">等于</option>
+        <option value="ne">不等于</option>
+        <option value="gt" data-ph="数字，如 3">大于</option>
+        <option value="lt" data-ph="数字，如 3">小于</option>
+        <option value="contains" data-ph="子串，如 [skip]">包含</option>
+        <option value="not_contains" data-ph="子串，如 [skip]">不包含</option>
+        <option value="exists" data-novalue>字段存在</option>
+        <option value="not_exists" data-novalue>字段不存在</option>
+        <option value="regex" data-ph="正则，如 ^a/">正则匹配</option>
+        <option value="in" data-ph="JSON 数组，如 [&quot;push&quot;,&quot;tag&quot;]">属于列表</option>
+      </select>
+      <input type="text" data-f-value placeholder="值，如 push / true / 123" autocomplete="off">
+      <button type="button" class="sm danger" data-f-del>删除</button>
+    </div>
+  </template>
 </div>
 
 <div class="panel">

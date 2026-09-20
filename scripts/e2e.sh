@@ -219,6 +219,39 @@ for page in / /sources /rules /deliveries /settings /deliveries/1; do
 done
 pass "概览 / 源 / 规则 / 投递日志 / 详情 / 设置 全部正常渲染"
 
+# 规则表单的过滤条件编辑器：可视化那半是 JS 铺的，但脚手架和操作符表必须在 HTML 里，
+# 不然 JS 一挂（或没加载）就没得选了。
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules/1/edit" > "$WORK/rule_edit.html"
+grep -q 'data-filter-editor' "$WORK/rule_edit.html" || fail "规则表单缺少过滤条件编辑器容器"
+grep -q 'data-filter-row-tpl' "$WORK/rule_edit.html" || fail "规则表单缺少条件行模板"
+grep -q 'name="filters"' "$WORK/rule_edit.html" || fail "过滤条件没有可提交的字段"
+for op in eq ne gt lt contains not_contains exists not_exists regex in; do
+  grep -q "value=\"$op\"" "$WORK/rule_edit.html" || fail "操作符下拉里缺少 $op"
+done
+# 已保存的条件要回填到文本框里（可视化行由 JS 从这段文本铺出来）
+grep -q 'action eq push' "$WORK/rule_edit.html" || fail "过滤条件没有回填到表单"
+pass "规则表单的过滤条件编辑器渲染正常，操作符齐全"
+
+# 校验失败时整张表单要回填，不能只留一个错误提示。
+curl -s -b "$JAR" -c "$JAR" -X POST \
+  --data-urlencode "name=回填测试" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=1" \
+  --data-urlencode "to_source_ids=2" \
+  --data-urlencode "filters=action eq push
+这一行是坏的" \
+  --data-urlencode "body_template={{.Payload.action}}" \
+  --data-urlencode "subject_template=主题" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules" > "$WORK/rule_err.html"
+grep -q "过滤器第 2 行" "$WORK/rule_err.html" || fail "过滤条件语法错误没有报出行号"
+grep -q 'value="回填测试"' "$WORK/rule_err.html" || fail "校验失败后规则名称被清空了"
+grep -q 'name="from_source_ids" value="1" checked' "$WORK/rule_err.html" || fail "校验失败后接收源选择被清空了"
+grep -q 'name="to_source_ids" value="2" checked' "$WORK/rule_err.html" || fail "校验失败后目标源选择被清空了"
+grep -q '{{.Payload.action}}' "$WORK/rule_err.html" || fail "校验失败后报文体模板被清空了"
+grep -q '这一行是坏的' "$WORK/rule_err.html" || fail "校验失败后用户写的过滤文本被丢掉了"
+pass "规则表单校验失败后会整张回填"
+
 # 未登录访问后台必须被重定向到登录页
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/settings")
 [ "$code" = "303" ] || fail "未登录访问后台应重定向，实际 $code"

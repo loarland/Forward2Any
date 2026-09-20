@@ -60,7 +60,7 @@ func (s *Server) handleRuleList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRuleForm(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("id") == "" {
-		s.renderRuleForm(w, r, &store.Rule{Enabled: true}, "")
+		s.renderRuleForm(w, r, &store.Rule{Enabled: true}, "", "")
 		return
 	}
 	id, err := parseID(r)
@@ -77,10 +77,12 @@ func (s *Server) handleRuleForm(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "读取规则失败", err)
 		return
 	}
-	s.renderRuleForm(w, r, rule, "")
+	s.renderRuleForm(w, r, rule, FiltersToText(rule.Filters), "")
 }
 
-func (s *Server) renderRuleForm(w http.ResponseWriter, r *http.Request, rule *store.Rule, errMsg string) {
+// renderRuleForm 里的 filterText 单独传：校验失败时要原样回填用户写的那段文本，
+// 而 rule.Filters 只放解析成功的部分（解析失败时它是空的）。
+func (s *Server) renderRuleForm(w http.ResponseWriter, r *http.Request, rule *store.Rule, filterText, errMsg string) {
 	sources, err := s.store.ListSources()
 	if err != nil {
 		s.fail(w, "读取源列表失败", err)
@@ -94,7 +96,7 @@ func (s *Server) renderRuleForm(w http.ResponseWriter, r *http.Request, rule *st
 		"Sources":    sources,
 		"FromSet":    idSet(rule.FromSourceIDs),
 		"ToSet":      idSet(rule.ToSourceIDs),
-		"FilterText": FiltersToText(rule.Filters),
+		"FilterText": filterText,
 		"Error":      errMsg,
 	})
 }
@@ -109,7 +111,7 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request) {
 		err = s.store.SaveRule(rule)
 	}
 	if err != nil {
-		s.renderRuleForm(w, r, rule, err.Error())
+		s.renderRuleForm(w, r, rule, r.PostFormValue("filters"), err.Error())
 		return
 	}
 	http.Redirect(w, r, "/rules?ok=saved", http.StatusSeeOther)
@@ -140,7 +142,7 @@ func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		err = s.store.SaveRule(rule)
 	}
 	if err != nil {
-		s.renderRuleForm(w, r, rule, err.Error())
+		s.renderRuleForm(w, r, rule, r.PostFormValue("filters"), err.Error())
 		return
 	}
 	s.log.Info("更新规则", "规则", rule.Name, "id", id)
@@ -232,29 +234,31 @@ func filterValueText(v any) string {
 // ---------- 表单 -> 模型 ----------
 
 func (s *Server) ruleFromForm(r *http.Request) (*store.Rule, error) {
-	from, err := formIntList(r, "from_source_ids")
-	if err != nil {
-		return &store.Rule{}, errors.New("接收源选择不合法")
-	}
-	to, err := formIntList(r, "to_source_ids")
-	if err != nil {
-		return &store.Rule{}, errors.New("目标源选择不合法")
-	}
-	filters, err := ParseFilters(r.PostFormValue("filters"))
-	if err != nil {
-		return &store.Rule{}, err
-	}
-
+	// 先把表单里的所有字段收下来，再去校验。以前是每步校验失败就返回一个空 Rule，
+	// 结果过滤条件写错一行，名称、源选择、模板全被清空，用户得从头再填一遍。
 	rule := &store.Rule{
 		Name:            formValue(r, "name"),
 		Enabled:         formBool(r, "enabled"),
-		FromSourceIDs:   from,
-		ToSourceIDs:     to,
-		Filters:         filters,
 		BodyTemplate:    strings.TrimSpace(r.PostFormValue("body_template")),
 		SubjectTemplate: strings.TrimSpace(r.PostFormValue("subject_template")),
 		HeadersTemplate: strings.TrimSpace(r.PostFormValue("headers_template")),
 	}
+
+	from, err := formIntList(r, "from_source_ids")
+	if err != nil {
+		return rule, errors.New("接收源选择不合法")
+	}
+	to, err := formIntList(r, "to_source_ids")
+	if err != nil {
+		return rule, errors.New("目标源选择不合法")
+	}
+	rule.FromSourceIDs, rule.ToSourceIDs = from, to
+
+	filters, err := ParseFilters(r.PostFormValue("filters"))
+	if err != nil {
+		return rule, err
+	}
+	rule.Filters = filters
 
 	if rule.Name == "" {
 		return rule, errors.New("规则名称不能为空")
@@ -282,7 +286,6 @@ func (s *Server) ruleFromForm(r *http.Request) (*store.Rule, error) {
 	return rule, nil
 }
 
-// sampleTemplateData 只用在校验模板语法，内容无所谓。
 func idSet(ids []int64) map[int64]bool {
 	out := make(map[int64]bool, len(ids))
 	for _, id := range ids {

@@ -72,6 +72,184 @@
     fallbackCopy(text, flash);
   });
 
+  // 4) 过滤条件的可视化编辑器。
+  //    真正提交的还是那个文本框（「路径 操作符 值」一行一条），可视化只是它的一个视图：
+  //    改行就重写文本框，改文本就重建行。于是没有 JS 时页面照旧能用，服务端也只认一种格式。
+  (function () {
+    var root = document.querySelector('[data-filter-editor]');
+    if (!root) {
+      return;
+    }
+    var tpl = document.querySelector('[data-filter-row-tpl]');
+    var ta = root.querySelector('textarea[name=filters]');
+    var visual = root.querySelector('[data-filter-visual]');
+    var textBox = root.querySelector('[data-filter-text]');
+    var rowsBox = root.querySelector('[data-filter-rows]');
+    var emptyBox = root.querySelector('[data-filter-empty]');
+    var errorBox = root.querySelector('[data-filter-error]');
+    var modeBtn = root.querySelector('[data-filter-mode]');
+    var addBtn = root.querySelector('[data-filter-add]');
+    if (!tpl || !ta || !visual || !textBox || !rowsBox || !modeBtn || !addBtn) {
+      return;
+    }
+
+    function rows() {
+      return Array.prototype.slice.call(rowsBox.children);
+    }
+
+    // 操作符决定了「值」这一格还要不要：exists/not_exists 没有值，别的都必填。
+    // 这些元信息写在模板的 <option> 上，免得在 JS 里再抄一份操作符表。
+    function syncRow(row) {
+      var opEl = row.querySelector('[data-f-op]');
+      var opt = opEl.options[opEl.selectedIndex];
+      var valEl = row.querySelector('[data-f-value]');
+      var noValue = !!(opt && opt.hasAttribute('data-novalue'));
+      valEl.disabled = noValue;
+      if (!noValue) {
+        valEl.placeholder = (opt && opt.getAttribute('data-ph')) || '值，如 push / true / 123';
+      }
+      row.classList.toggle('no-value', noValue);
+    }
+
+    function addRow(f) {
+      var row = tpl.content.firstElementChild.cloneNode(true);
+      row.querySelector('[data-f-path]').value = f.path || '';
+      row.querySelector('[data-f-op]').value = f.op || 'eq';
+      row.querySelector('[data-f-value]').value = f.value == null ? '' : f.value;
+      syncRow(row);
+      rowsBox.appendChild(row);
+      return row;
+    }
+
+    function toText() {
+      var out = [];
+      rows().forEach(function (row) {
+        var path = row.querySelector('[data-f-path]').value.trim();
+        if (path === '') {
+          return; // 空行等于没写，别生成一条语法错误的记录
+        }
+        var op = row.querySelector('[data-f-op]').value;
+        var val = row.querySelector('[data-f-value]').value.trim();
+        out.push(val === '' ? path + ' ' + op : path + ' ' + op + ' ' + val);
+      });
+      return out.join('\n');
+    }
+
+    function fromText(text) {
+      rowsBox.innerHTML = '';
+      text.split('\n').forEach(function (line) {
+        line = line.trim();
+        if (line === '' || line.charAt(0) === '#') {
+          return;
+        }
+        var m = line.match(/^(\S+)\s+(\S+)(?:\s+([\s\S]+))?$/);
+        if (m) {
+          addRow({ path: m[1], op: m[2], value: (m[3] || '').trim() });
+        }
+      });
+    }
+
+    function chrome() {
+      var n = rowsBox.children.length;
+      emptyBox.hidden = n > 0;
+      if (n === 0) {
+        errorBox.hidden = true;
+      }
+    }
+
+    function refresh() {
+      ta.value = toText();
+      chrome();
+      // 用户开始改哪一行，就把哪一行的红框撤掉，别让他改完还看着像是错的。
+      if (!rowsBox.querySelector('.filter-row.invalid')) {
+        errorBox.hidden = true;
+      }
+    }
+
+    // 初始化：把文本框里的内容铺成行。注意这里不回写 ta，
+    // 否则注释和用户自己的排版在打开页面时就被抹掉了。
+    fromText(ta.value);
+    chrome();
+    visual.hidden = false;
+    modeBtn.hidden = false;
+
+    modeBtn.addEventListener('click', function () {
+      var toText = !visual.hidden;
+      visual.hidden = toText;
+      textBox.hidden = !toText;
+      modeBtn.textContent = toText ? '可视化模式' : '文本模式';
+      if (toText) {
+        ta.focus();
+        return;
+      }
+      fromText(ta.value);
+      chrome();
+    });
+
+    ta.addEventListener('input', function () {
+      if (!textBox.hidden) {
+        fromText(ta.value);
+        chrome();
+      }
+    });
+
+    addBtn.addEventListener('click', function () {
+      addRow({}).querySelector('[data-f-path]').focus();
+      refresh();
+    });
+
+    rowsBox.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-f-del]') : null;
+      if (!btn) {
+        return;
+      }
+      btn.closest('.filter-row').remove();
+      refresh();
+    });
+
+    rowsBox.addEventListener('input', function (e) {
+      var row = e.target && e.target.closest ? e.target.closest('.filter-row') : null;
+      if (row) {
+        row.classList.remove('invalid');
+      }
+      refresh();
+    });
+    rowsBox.addEventListener('change', function (e) {
+      if (e.target && e.target.hasAttribute('data-f-op')) {
+        syncRow(e.target.closest('.filter-row'));
+      }
+      refresh();
+    });
+
+    var form = root.closest('form');
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        if (visual.hidden) {
+          return; // 文本模式原样交给服务端校验
+        }
+        var bad = null;
+        rows().forEach(function (row) {
+          row.classList.remove('invalid');
+          if (row.querySelector('[data-f-path]').value.trim() === '') {
+            return;
+          }
+          var valEl = row.querySelector('[data-f-value]');
+          if (!valEl.disabled && valEl.value.trim() === '') {
+            row.classList.add('invalid');
+            bad = bad || row;
+          }
+        });
+        if (!bad) {
+          return;
+        }
+        e.preventDefault();
+        errorBox.textContent = '有条件的「值」还没填，补齐后再保存';
+        errorBox.hidden = false;
+        bad.querySelector('[data-f-value]').focus();
+      });
+    }
+  })();
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

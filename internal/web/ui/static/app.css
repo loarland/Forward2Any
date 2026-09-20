@@ -123,6 +123,47 @@
   white-space: nowrap;
 }
 
+/* ---------- 过滤条件编辑器 ----------
+   可视化那一半是 app.js 铺出来的；没有 JS 时这几条规则不生效，
+   页面上就只剩那个文本框，和以前一样能用。 */
+.filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.filter-head .muted { font-size: 13px; }
+
+.filter-rows { display: flex; flex-direction: column; gap: 8px; }
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: #f7f8fa;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+/* 用 flex-basis 定宽，压掉全局 input/select 的 width:100%；
+   min-width:0 是必须的，不然输入框撑不下会溢出容器。 */
+.filter-row [data-f-path]  { flex: 1 1 160px; min-width: 0; }
+.filter-row [data-f-op]    { flex: 0 0 128px; width: auto; }
+.filter-row [data-f-value] { flex: 1.4 1 200px; min-width: 0; }
+.filter-row [data-f-del]   { flex: 0 0 auto; }
+.filter-row.no-value [data-f-value] { background: #eef0f4; color: var(--muted); }
+.filter-row.invalid [data-f-path], .filter-row.invalid [data-f-value] { border-color: var(--err); }
+
+.filter-empty { padding: 4px 0 12px; font-size: 13px; }
+.filter-add { margin-top: 10px; }
+.filter-visual .alert { margin: 12px 0 0; }
+
+@media (max-width: 720px) {
+  .filter-row { flex-wrap: wrap; }
+  .filter-row [data-f-path] { flex: 1 1 100%; }
+  .filter-row [data-f-value] { flex: 1 1 auto; }
+}
+
 .meta-line {
   display: flex;
   gap: 10px;

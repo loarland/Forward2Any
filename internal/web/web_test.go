@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -192,6 +193,66 @@ func TestParseFiltersErrors(t *testing.T) {
 		if _, err := ParseFilters(s); err != nil {
 			t.Errorf("%q 应当合法，得到 %v", s, err)
 		}
+	}
+}
+
+// 过滤条件写错时，表单里其他字段不能跟着被清空 —— 以前 ruleFromForm 每步失败都返回空 Rule，
+// 用户改一个错别字就得把名称、源选择、模板全部重填。
+func TestRuleFromFormKeepsInputOnError(t *testing.T) {
+	form := url.Values{
+		"name":             {"我的规则"},
+		"enabled":          {"1"},
+		"from_source_ids":  {"1", "2"},
+		"to_source_ids":    {"3"},
+		"filters":          {"action eq push\n第三行乱写\n"},
+		"body_template":    {"{{.Payload.action}}"},
+		"subject_template": {"主题"},
+		"headers_template": {`{"X-A":"1"}`},
+	}
+	r := httptest.NewRequest("POST", "/rules", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	rule, err := (&Server{}).ruleFromForm(r)
+	if err == nil {
+		t.Fatal("过滤条件有语法错误，应当报错")
+	}
+	if !strings.Contains(err.Error(), "第 2 行") {
+		t.Errorf("错误信息应当指出出问题的行号，得到 %q", err.Error())
+	}
+	if rule.Name != "我的规则" {
+		t.Errorf("名称应当回填，得到 %q", rule.Name)
+	}
+	if len(rule.FromSourceIDs) != 2 || len(rule.ToSourceIDs) != 1 {
+		t.Errorf("源选择应当回填，得到 from=%v to=%v", rule.FromSourceIDs, rule.ToSourceIDs)
+	}
+	if rule.BodyTemplate != "{{.Payload.action}}" || rule.SubjectTemplate != "主题" {
+		t.Errorf("模板应当回填，得到 %q / %q", rule.BodyTemplate, rule.SubjectTemplate)
+	}
+	if rule.HeadersTemplate != `{"X-A":"1"}` {
+		t.Errorf("请求头模板应当回填，得到 %q", rule.HeadersTemplate)
+	}
+	if !rule.Enabled {
+		t.Error("启用状态应当回填")
+	}
+
+	// 名称缺失这类错误同样要能回填过滤条件和源选择。
+	form.Set("name", "")
+	form.Set("filters", "action eq push")
+	r2 := httptest.NewRequest("POST", "/rules", strings.NewReader(form.Encode()))
+	r2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r2.ParseForm()
+	rule2, err := (&Server{}).ruleFromForm(r2)
+	if err == nil {
+		t.Fatal("名称为空应当报错")
+	}
+	if len(rule2.FromSourceIDs) != 2 {
+		t.Errorf("名称为空时源选择也应回填，得到 %v", rule2.FromSourceIDs)
+	}
+	if len(rule2.Filters) != 1 || rule2.Filters[0].Path != "action" {
+		t.Errorf("名称为空时过滤条件也应回填，得到 %#v", rule2.Filters)
 	}
 }
 
