@@ -31,6 +31,69 @@
 .panel details { margin-top: 10px; }
 .panel details summary { cursor: pointer; font-size: 13px; }
 
+/* ---------- 源卡片 ----------
+   头部做成色带，按「用途」着色（接收=蓝 / 发送=绿 / 两者=紫），
+   一眼就能扫出哪个是入口、哪个是出口。 */
+.source-card { padding: 0; overflow: hidden; }
+
+.source-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  background: #f6f8fb;
+  border-bottom: 1px solid var(--line);
+  border-left: 4px solid #c8cfda;
+  flex-wrap: wrap;
+}
+.source-head .source-name { font-weight: 600; font-size: 14.5px; margin-right: 2px; }
+.source-head .spacer { flex: 1 1 auto; }
+/* 按钮成组、不收缩、不换行，避免单个按钮掉到下一行看起来像多出来的 */
+.source-head .btn-group { display: flex; gap: 8px; flex: 0 0 auto; }
+.source-head .btn-group form { margin: 0; }
+
+.source-card.usage-in   .source-head { background: #eef4ff; border-left-color: #3b74e8; }
+.source-card.usage-out  .source-head { background: #eafaf1; border-left-color: #17a05e; }
+.source-card.usage-both .source-head { background: #f5efff; border-left-color: #7c4ddb; }
+
+.source-body { padding: 14px 16px; }
+.source-body > :first-child { margin-top: 0; }
+
+.field-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+
+/* 输入框和「复制」贴在一起，明确是一组，不会飘到最右边看起来像第四个按钮 */
+.input-group { display: flex; max-width: 640px; margin-bottom: 4px; }
+.input-group input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: #f7f8fa;
+}
+.input-group button {
+  flex: 0 0 auto;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+}
+
+.meta-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  margin-top: 8px;
+  word-break: break-all;
+}
+.meta-key {
+  flex: 0 0 auto;
+  min-width: 62px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 body {
   margin: 0;
   background: var(--bg);

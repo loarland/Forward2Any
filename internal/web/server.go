@@ -85,7 +85,28 @@ func (s *Server) Handler() http.Handler {
 	// 兜底：其余路径都进后台，未登录会被重定向到登录页。
 	root.Handle("/", s.adminMux())
 
-	return s.logRequests(root)
+	return s.logRequests(s.noStoreHTML(root))
+}
+
+// noStore 关掉浏览器缓存。
+//
+// 后台是动态且带鉴权的：不禁缓存的话，浏览器会用启发式缓存或 bfcache 把旧页面
+// 直接端出来 —— 典型症状是「新建规则」页在新建源之前访问过，之后再去看到的
+// 还是旧的下拉列表，刷新一下才对。退出登录后按「后退」也不该还能看到后台内容。
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
+func (s *Server) noStoreHTML(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 内嵌的静态资源可以缓存，动态内容一律不缓存。
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			noStore(w)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) adminMux() http.Handler {
@@ -222,6 +243,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 		http.Error(w, "模板渲染失败", http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(buf.Bytes())
 }

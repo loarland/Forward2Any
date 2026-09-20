@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>源</h1>
-    <div class="sub">接收来源与转发目标，支持 webhook 与邮件两种类型</div>
+    <div class="sub">接收来源与转发目标，支持 Webhook 与邮件两种类型</div>
   </div>
   <a class="btn primary" href="/sources/new">新建源</a>
 </div>
@@ -12,37 +12,54 @@
 {{end}}
 
 {{range .Rows}}
-<div class="panel">
-  <div class="rowhead">
-    <div>
-      <strong>{{.Src.Name}}</strong>
-      <span class="tag {{if .Src.Enabled}}on{{else}}off{{end}}">{{if .Src.Enabled}}启用{{else}}停用{{end}}</span>
-      <span class="tag">{{kindText .Src.Kind}}</span>
-      <span class="tag">{{usageText .Src.Usage}}</span>
-    </div>
-    <div class="actions">
+<div class="panel source-card usage-{{.Src.Usage}}">
+
+  <div class="source-head">
+    <span class="source-name">{{.Src.Name}}</span>
+    <span class="tag {{if .Src.Enabled}}on{{else}}off{{end}}">{{if .Src.Enabled}}启用{{else}}停用{{end}}</span>
+    <span class="tag">{{kindText .Src.Kind}}</span>
+    <span class="tag">{{usageText .Src.Usage}}</span>
+    <span class="spacer"></span>
+    <span class="btn-group">
+      {{if .Src.CanSend}}
       <form method="post" action="/sources/{{.Src.ID}}/test">
-        <button class="sm" type="submit" {{if not .Src.CanSend}}disabled title="该源不是发送用途"{{end}}>发送测试</button>
+        <button class="sm" type="submit" title="往这个目标发一条测试消息">发送测试</button>
       </form>
+      {{end}}
       <a class="btn sm" href="/sources/{{.Src.ID}}/edit">编辑</a>
       <form method="post" action="/sources/{{.Src.ID}}/delete">
         <button class="sm danger" type="submit" hx-confirm="确定删除源「{{.Src.Name}}」吗？引用它的规则会自动摘掉这个源。">删除</button>
       </form>
+    </span>
+  </div>
+
+  <div class="source-body">
+    {{if .HookURL}}
+    <div class="field-label">回调地址 <span class="muted">把它填到发送方</span></div>
+    <div class="input-group">
+      <input type="text" readonly value="{{.HookURL}}" onclick="this.select()">
+      <button class="sm" type="button" data-copy="{{.HookURL}}">复制</button>
     </div>
+    <details>
+      <summary>curl 示例</summary>
+      <pre class="body">{{.Curl}}</pre>
+    </details>
+    {{end}}
+
+    {{if .Src.URL}}
+    <div class="meta-line"><span class="meta-key">目标地址</span><span class="mono">{{.Src.URL}}</span></div>
+    {{end}}
+    {{if .Src.MailTo}}
+    <div class="meta-line"><span class="meta-key">收件人</span><span class="mono">{{.Src.MailTo}}</span></div>
+    {{end}}
+    {{if .Src.IMAPHost}}
+    <div class="meta-line"><span class="meta-key">收信</span><span class="mono">{{.Src.IMAPUser}}@{{.Src.IMAPHost}} / {{.Src.IMAPFolder}}</span></div>
+    {{end}}
+    {{if .Src.IPAllow}}
+    <div class="meta-line"><span class="meta-key">IP 白名单</span><span class="mono">{{.Src.IPAllow}}</span></div>
+    {{end}}
   </div>
 
-  {{if .HookURL}}
-  <div class="copy-row">
-    <input type="text" readonly value="{{.HookURL}}">
-    <button class="sm" type="button" data-copy="{{.HookURL}}">复制</button>
-  </div>
-  <details>
-    <summary class="muted">curl 示例</summary>
-    <pre class="body">{{.Curl}}</pre>
-  </details>
-  {{end}}
-
-  {{if .Src.IPAllow}}<div class="sub" style="margin-top:8px">IP 白名单：<span class="mono">{{.Src.IPAllow}}</span></div>{{end}}
 </div>
 {{end}}
 {{end}}

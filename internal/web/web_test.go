@@ -4,7 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/loarland/Forward2Any/internal/store"
@@ -289,5 +291,37 @@ func TestSameOrigin(t *testing.T) {
 	referer.Header.Set("Referer", "http://evil.example/x")
 	if sameOrigin(referer) {
 		t.Error("跨站 Referer 应当被拒绝")
+	}
+}
+
+// 后台页面必须禁用缓存。否则浏览器会用启发式缓存/bfcache 端出旧页面：
+// 典型症状是「新建规则」页里源的下拉列表是过期的，刷新一下才对。
+func TestAdminPagesAreNotCached(t *testing.T) {
+	s := &Server{}
+	h := s.noStoreHTML(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{"/", "/sources", "/rules/new", "/deliveries", "/settings", "/login"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "no-store") {
+			t.Errorf("%s 的 Cache-Control 应当含 no-store，实际 %q", path, cc)
+		}
+	}
+}
+
+// 静态资源反过来应该允许缓存，不然每次都要重新下载 htmx。
+func TestStaticAssetsRemainCacheable(t *testing.T) {
+	s := &Server{}
+	h := s.noStoreHTML(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/static/app.css", nil))
+	if cc := rec.Header().Get("Cache-Control"); strings.Contains(cc, "no-store") {
+		t.Errorf("静态资源不该被设成 no-store，实际 %q", cc)
 	}
 }
