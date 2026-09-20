@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func samplePayload() map[string]any {
@@ -359,8 +359,8 @@ func TestDeliverySuccessRecordsResponse(t *testing.T) {
 
 	var gotTrace, gotHops string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotTrace = r.Header.Get("X-W2A-Trace")
-		gotHops = r.Header.Get("X-W2A-Hops")
+		gotTrace = r.Header.Get("X-F2A-Trace")
+		gotHops = r.Header.Get("X-F2A-Hops")
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte("done"))
 	}))

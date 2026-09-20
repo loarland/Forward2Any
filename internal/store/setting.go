@@ -5,15 +5,26 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math/big"
 	"strconv"
 )
+
+// DefaultAdminPassword 是首次启动时使用的默认管理员密码。
+//
+// 这么设计是为了让 `docker compose up -d` 之后立刻就能登录，零配置。
+// 但默认密码本身是个风险：一个公网可达的后台配三位密码，等于把 webhook 密钥
+// 和邮箱密码直接送人。所以配套做了两件事：
+//  1. Settings.AdminPassDefault 记录了「当前还是默认密码」；
+//  2. 只要还是默认密码，后台除设置页外的所有页面都会强制跳转到设置页要求改密。
+//
+// 想跳过这一切，启动时给 F2A_ADMIN_PASSWORD 设一个自己的密码即可。
+const DefaultAdminPassword = "f2a"
 
 // 设置键。集中定义，避免字符串字面量散落各处。
 const (
 	KeyWebPort             = "web_port"
 	KeyAdminUser           = "admin_user"
 	KeyAdminPassHash       = "admin_pass_hash"
+	KeyAdminPassDefault    = "admin_pass_default"
 	KeyBaseURL             = "base_url"
 	KeyRetryMax            = "retry_max"
 	KeyRetryBackoffSeconds = "retry_backoff_seconds"
@@ -26,6 +37,7 @@ type Settings struct {
 	WebPort             int
 	AdminUser           string
 	AdminPassHash       string
+	AdminPassDefault    bool // 密码是否仍是默认值
 	BaseURL             string
 	RetryMax            int
 	RetryBackoffSeconds int
@@ -38,9 +50,9 @@ type Settings struct {
 
 func DefaultSettings() *Settings {
 	return &Settings{
-		WebPort:             8080,
+		WebPort:             16000,
 		AdminUser:           "admin",
-		BaseURL:             "http://localhost:8080",
+		BaseURL:             "http://localhost:16000",
 		RetryMax:            5,
 		RetryBackoffSeconds: 10,
 		PayloadMaxBytes:     65536,
@@ -56,11 +68,13 @@ type BootstrapInput struct {
 }
 
 // Bootstrap 在首次启动时把环境变量写入设置表；已存在的键一律不覆盖。
-// 若管理员密码既无环境变量也无历史记录，则随机生成并返回，由调用方打印一次。
-func (s *Store) Bootstrap(in BootstrapInput) (generatedPassword string, err error) {
+//
+// 返回值 usingDefaultPassword 表示当前用的还是默认密码，由调用方提示用户。
+// 传了 in.AdminPass 就不会用默认密码。
+func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err error) {
 	exist, err := s.Settings()
 	if err != nil {
-		return "", err
+		return false, err
 	}
 
 	seed := map[string]string{}
@@ -82,20 +96,26 @@ func (s *Store) Bootstrap(in BootstrapInput) (generatedPassword string, err erro
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
 		if pw == "" {
-			pw, err = RandomPassword(16)
-			if err != nil {
-				return "", err
-			}
-			generatedPassword = pw
+			pw = DefaultAdminPassword
+			seed[KeyAdminPassDefault] = "1"
+		} else {
+			seed[KeyAdminPassDefault] = "0"
 		}
 		hash, err := HashPassword(pw)
 		if err != nil {
-			return "", err
+			return false, err
 		}
 		seed[KeyAdminPassHash] = hash
 	}
 
-	return generatedPassword, s.SetSettings(seed)
+	if err := s.SetSettings(seed); err != nil {
+		return false, err
+	}
+	after, err := s.Settings()
+	if err != nil {
+		return false, err
+	}
+	return after.AdminPassDefault, nil
 }
 
 func (s *Store) Settings() (*Settings, error) {
@@ -113,6 +133,7 @@ func (s *Store) Settings() (*Settings, error) {
 	d.WebPort = atoi(get(KeyWebPort, strconv.Itoa(d.WebPort)), d.WebPort)
 	d.AdminUser = get(KeyAdminUser, d.AdminUser)
 	d.AdminPassHash = raw[KeyAdminPassHash]
+	d.AdminPassDefault = raw[KeyAdminPassDefault] == "1"
 	d.BaseURL = get(KeyBaseURL, d.BaseURL)
 	d.RetryMax = atoi(get(KeyRetryMax, strconv.Itoa(d.RetryMax)), d.RetryMax)
 	d.RetryBackoffSeconds = atoi(get(KeyRetryBackoffSeconds, strconv.Itoa(d.RetryBackoffSeconds)), d.RetryBackoffSeconds)
@@ -171,6 +192,7 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyWebPort:             strconv.Itoa(v.WebPort),
 		KeyAdminUser:           v.AdminUser,
 		KeyAdminPassHash:       v.AdminPassHash,
+		KeyAdminPassDefault:    boolStr(v.AdminPassDefault),
 		KeyBaseURL:             v.BaseURL,
 		KeyRetryMax:            strconv.Itoa(v.RetryMax),
 		KeyRetryBackoffSeconds: strconv.Itoa(v.RetryBackoffSeconds),
@@ -186,19 +208,11 @@ func atoi(s string, def int) int {
 	return def
 }
 
-// RandomPassword 生成 n 位随机密码，字母表去掉了易混字符（0/O、1/l/I）。
-func RandomPassword(n int) (string, error) {
-	const alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	out := make([]byte, n)
-	max := big.NewInt(int64(len(alphabet)))
-	for i := range out {
-		idx, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			return "", fmt.Errorf("生成随机密码: %w", err)
-		}
-		out[i] = alphabet[idx.Int64()]
+func boolStr(b bool) string {
+	if b {
+		return "1"
 	}
-	return string(out), nil
+	return "0"
 }
 
 // RandomHex 生成 n 字节的随机十六进制串（2n 个字符）。

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func (s *Server) registerSources(mux *http.ServeMux) {
@@ -182,7 +182,7 @@ func (s *Server) handleSourceTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := `{"test":true,"from":"Webhook2Any","message":"这是一条测试消息"}`
+	body := `{"test":true,"from":"Forward2Any","message":"这是一条测试消息"}`
 	if err := s.engine.PostTest(src, body); err != nil {
 		s.fail(w, "入队测试消息失败", err)
 		return
@@ -365,7 +365,7 @@ func curlExample(base string, src *store.Source) string {
 	case "token":
 		name := src.AuthHeader
 		if name == "" {
-			name = "X-W2A-Token"
+			name = "X-F2A-Token"
 		}
 		fmt.Fprintf(&b, " \\\n  -H '%s: %s'", name, src.AuthSecret)
 	case "hmac_sha256":

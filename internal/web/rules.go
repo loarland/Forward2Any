@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/loarland/Webhook2Any/internal/engine"
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func (s *Server) registerRules(mux *http.ServeMux) {

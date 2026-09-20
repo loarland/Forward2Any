@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}} · Webhook2Any</title>
+<title>{{.Title}} · Forward2Any</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>
 <script src="/static/app.js" defer></script>
@@ -11,7 +11,7 @@
 <body>
 {{if .Nav}}
 <header class="topbar">
-  <a class="brand" href="/">Webhook2Any</a>
+  <a class="brand" href="/">Forward2Any</a>
   <nav>
     <a href="/" class="{{if eq .Nav "dashboard"}}active{{end}}">概览</a>
     <a href="/sources" class="{{if eq .Nav "sources"}}active{{end}}">源</a>
@@ -23,6 +23,10 @@
 </header>
 {{end}}
 <main class="{{if not .Nav}}narrow{{end}}">
+{{if .DefaultPassword}}<div class="alert err">
+  <strong>你仍在使用默认密码 <span class="mono">{{.DefaultPasswordValue}}</span>。</strong>
+  在改掉它之前，后台只开放本页。请在下方「管理员账号」里设置新密码。
+</div>{{end}}
 {{if .Flash}}<div class="alert ok">{{.Flash}}</div>{{end}}
 {{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
 {{template "content" .}}

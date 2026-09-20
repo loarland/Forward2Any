@@ -1,4 +1,4 @@
-// Webhook2Any 后台的少量交互脚本。
+// Forward2Any 后台的少量交互脚本。
 // 页面本身是标准的表单 POST + 重定向，这里只做两件锦上添花的事。
 (function () {
   'use strict';

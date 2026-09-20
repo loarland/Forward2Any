@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func TestIPAllowed(t *testing.T) {
@@ -60,13 +60,13 @@ func TestVerifyInbound(t *testing.T) {
 		src := &store.Source{AuthMode: "token", AuthSecret: "s3cret"}
 
 		ok := httptest.NewRequest("POST", "/hook/x", nil)
-		ok.Header.Set("X-W2A-Token", "s3cret")
+		ok.Header.Set("X-F2A-Token", "s3cret")
 		if !verifyInbound(src, ok, body) {
 			t.Error("正确密钥应当通过")
 		}
 
 		bad := httptest.NewRequest("POST", "/hook/x", nil)
-		bad.Header.Set("X-W2A-Token", "wrong")
+		bad.Header.Set("X-F2A-Token", "wrong")
 		if verifyInbound(src, bad, body) {
 			t.Error("错误密钥不应通过")
 		}

@@ -1,7 +1,7 @@
-// 命令 w2a：Webhook2Any 服务端。
+// 命令 f2a：Forward2Any 服务端。
 //
-//	go run ./cmd/w2a              # 启动服务
-//	./w2a healthcheck --url ...   # 容器健康检查（distroless 里没有 curl）
+//	go run ./cmd/f2a              # 启动服务
+//	./f2a healthcheck --url ...   # 容器健康检查（distroless 里没有 curl）
 package main
 
 import (
@@ -20,11 +20,11 @@ import (
 	// 把时区库编进二进制，distroless 镜像里没有 tzdata。
 	_ "time/tzdata"
 
-	"github.com/loarland/Webhook2Any/internal/config"
-	"github.com/loarland/Webhook2Any/internal/engine"
-	"github.com/loarland/Webhook2Any/internal/mailin"
-	"github.com/loarland/Webhook2Any/internal/store"
-	"github.com/loarland/Webhook2Any/internal/web"
+	"github.com/loarland/Forward2Any/internal/config"
+	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/mailin"
+	"github.com/loarland/Forward2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/web"
 )
 
 func main() {
@@ -48,7 +48,7 @@ func healthcheck(args []string) int {
 	// 免得用户改了端口之后容器一直显示 unhealthy。
 	target := *urlFlag
 	if target == "" {
-		port := 8080
+		port := 16000
 		if cfg, err := config.FromEnv(); err == nil {
 			if st, err := store.Open(cfg.DataDir); err == nil {
 				if s, err := st.Settings(); err == nil {
@@ -90,7 +90,7 @@ func run() error {
 	}
 	defer st.Close()
 
-	generated, err := st.Bootstrap(store.BootstrapInput{
+	usingDefaultPassword, err := st.Bootstrap(store.BootstrapInput{
 		Port:      cfg.Port,
 		AdminUser: cfg.AdminUser,
 		AdminPass: cfg.AdminPass,
@@ -105,12 +105,12 @@ func run() error {
 		return err
 	}
 
-	log.Info("Webhook2Any 已启动",
+	log.Info("Forward2Any 已启动",
 		"db", st.Path, "端口", settings.WebPort, "管理员", settings.AdminUser, "回调基址", settings.BaseURL)
-	if generated != "" {
-		// 只在首次启动、且没有提供 W2A_ADMIN_PASSWORD 时出现。
-		log.Warn("已生成初始管理员密码，请登录后立即修改；此密码只显示这一次",
-			"用户名", settings.AdminUser, "密码", generated)
+	if usingDefaultPassword {
+		// 只在使用默认密码时出现。改掉之后后台才会全部解锁。
+		log.Warn("当前使用默认管理员密码，登录后会强制要求修改；改掉之前后台只开放设置页",
+			"用户名", settings.AdminUser, "默认密码", store.DefaultAdminPassword)
 	}
 
 	// 转发引擎：负责规则分发与失败重试。

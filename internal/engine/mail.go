@@ -7,7 +7,7 @@ import (
 
 	"github.com/wneessen/go-mail"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // sendMail 通过 SMTP 发出一次投递。
@@ -32,17 +32,17 @@ func (e *Engine) sendMail(d *store.Delivery, out *store.Source) error {
 	}
 	subject := d.Subject
 	if subject == "" {
-		subject = "[Webhook2Any] 转发消息"
+		subject = "[Forward2Any] 转发消息"
 	}
 	msg.Subject(subject)
 	msg.SetBodyString(mail.TypeTextPlain, d.Rendered)
 
-	// 把跳链写进邮件头，收件方若也是 Webhook2Any（或本实例自己在轮询）就能断环。
+	// 把跳链写进邮件头，收件方若也是 Forward2Any（或本实例自己在轮询）就能断环。
 	if d.HopChain != "" {
-		msg.SetHeader("X-W2A-Hops", d.HopChain)
+		msg.SetHeader("X-F2A-Hops", d.HopChain)
 	}
 	if d.TraceID != "" {
-		msg.SetHeader("X-W2A-Trace", d.TraceID)
+		msg.SetHeader("X-F2A-Trace", d.TraceID)
 	}
 
 	port := out.SMTPPort

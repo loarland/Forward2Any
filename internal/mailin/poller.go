@@ -23,8 +23,8 @@ import (
 	"github.com/emersion/go-imap/client"
 	gomail "github.com/emersion/go-message/mail"
 
-	"github.com/loarland/Webhook2Any/internal/engine"
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 const (
@@ -372,7 +372,7 @@ func normalize(raw io.Reader, src *store.Source) (*normalizedMail, error) {
 	out["to"] = addresses(h, "To")
 	out["cc"] = addresses(h, "Cc")
 
-	for _, k := range []string{"X-W2A-Hops", "X-W2A-Trace", "Message-Id", "Reply-To"} {
+	for _, k := range []string{"X-F2A-Hops", "X-F2A-Trace", "Message-Id", "Reply-To"} {
 		if v := h.Get(k); v != "" {
 			headers[k] = v
 		}
@@ -425,14 +425,14 @@ func normalize(raw io.Reader, src *store.Source) (*normalizedMail, error) {
 		return nil, err
 	}
 
-	traceID := headers["X-W2A-Trace"]
+	traceID := headers["X-F2A-Trace"]
 	if traceID == "" {
 		traceID, _ = store.RandomHex(8)
 	}
 	return &normalizedMail{
 		Payload: payload,
 		Headers: headers,
-		Hops:    engine.ParseHops(headers["X-W2A-Hops"]),
+		Hops:    engine.ParseHops(headers["X-F2A-Hops"]),
 		TraceID: traceID,
 	}, nil
 }

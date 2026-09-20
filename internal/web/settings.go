@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func (s *Server) registerSettings(mux *http.ServeMux) {
@@ -66,9 +66,16 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	passwordChanged := false
 	if newPass := r.PostFormValue("new_password"); newPass != "" {
 		if newPass != r.PostFormValue("confirm_password") {
 			s.renderSettings(w, r, "两次输入的密码不一致", "")
+			return
+		}
+		// 默认密码的检查要排在长度检查前面：默认密码本身很短，
+		// 反过来的话这条分支永远不会被命中，用户只会看到「至少 8 位」。
+		if newPass == store.DefaultAdminPassword {
+			s.renderSettings(w, r, "新密码不能和默认密码相同", "")
 			return
 		}
 		if len([]rune(newPass)) < 8 {
@@ -81,6 +88,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		next.AdminPassHash = hash
+		next.AdminPassDefault = false
+		passwordChanged = true
 		s.log.Info("管理员密码已更新", "用户", next.AdminUser)
 	}
 
@@ -88,6 +97,10 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SaveSettings(&next); err != nil {
 		s.fail(w, "保存设置失败", err)
 		return
+	}
+	if passwordChanged {
+		// 改完密码后台就该解锁，不必等重启。
+		s.refreshPassFlag()
 	}
 	s.log.Info("更新设置", "端口", next.WebPort, "管理员", next.AdminUser)
 
@@ -103,6 +116,10 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, "", fmt.Sprintf(
 			"设置已保存。监听端口正在从 %d 切换到 %d，请稍后用新端口访问。"+
 				"若在 Docker 中运行，还需要同步修改 docker-compose.yml 的端口映射。", oldPort, next.WebPort))
+		return
+	}
+	if passwordChanged {
+		http.Redirect(w, r, "/settings?ok=password_changed", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/settings?ok=saved", http.StatusSeeOther)
@@ -223,7 +240,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf(`attachment; filename="webhook2any-%s.json"`, time.Now().Format("20060102-150405")))
+		fmt.Sprintf(`attachment; filename="forward2any-%s.json"`, time.Now().Format("20060102-150405")))
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(ef); err != nil {

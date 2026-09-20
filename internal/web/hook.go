@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/loarland/Webhook2Any/internal/engine"
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // maxInboundBody 是单次入站报文的内存读取上限。
@@ -70,11 +70,11 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	traceID := strings.TrimSpace(r.Header.Get("X-W2A-Trace"))
+	traceID := strings.TrimSpace(r.Header.Get("X-F2A-Trace"))
 	if traceID == "" {
 		traceID, _ = store.RandomHex(8)
 	}
-	hops := engine.ParseHops(r.Header.Get("X-W2A-Hops"))
+	hops := engine.ParseHops(r.Header.Get("X-F2A-Hops"))
 
 	if engine.IsLoop(hops, src.Slug) {
 		s.log.Warn("检测到循环转发，已拦截", "源", src.Name, "跳链", strings.Join(hops, ","))
@@ -124,7 +124,7 @@ func verifyInbound(src *store.Source, r *http.Request, body []byte) bool {
 		}
 		name := src.AuthHeader
 		if name == "" {
-			name = "X-W2A-Token"
+			name = "X-F2A-Token"
 		}
 		got := r.Header.Get(name)
 		if got == "" {

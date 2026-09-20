@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 const (
@@ -264,7 +264,7 @@ func (e *Engine) PostTest(out *store.Source, body string) error {
 		Status:      store.StatusPending,
 		Payload:     body,
 		Rendered:    body,
-		Subject:     "[Webhook2Any] 测试消息",
+		Subject:     "[Forward2Any] 测试消息",
 		ReqHeaders:  `{"Content-Type":"application/json"}`,
 	}
 	if err := e.store.CreateDelivery(d); err != nil {
@@ -369,7 +369,7 @@ func IsLoop(hops []string, slug string) bool {
 	return false
 }
 
-// ParseHops 解析 X-W2A-Hops 请求头。
+// ParseHops 解析 X-F2A-Hops 请求头。
 func ParseHops(raw string) []string {
 	var out []string
 	for _, p := range strings.Split(raw, ",") {

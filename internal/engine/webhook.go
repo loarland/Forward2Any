@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // sendWebhook 发出一次 HTTP 投递。
@@ -40,12 +40,12 @@ func (e *Engine) sendWebhook(d *store.Delivery, out *store.Source) (int, string,
 		}
 	}
 
-	// 带上跳链，对方若也是 Webhook2Any 就能自动断环。
+	// 带上跳链，对方若也是 Forward2Any 就能自动断环。
 	if d.TraceID != "" {
-		req.Header.Set("X-W2A-Trace", d.TraceID)
+		req.Header.Set("X-F2A-Trace", d.TraceID)
 	}
 	if d.HopChain != "" {
-		req.Header.Set("X-W2A-Hops", d.HopChain)
+		req.Header.Set("X-F2A-Hops", d.HopChain)
 	}
 
 	resp, err := e.client.Do(req)

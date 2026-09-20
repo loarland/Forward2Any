@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Webhook2Any 的 Docker 端到端验证。
+# Forward2Any 的 Docker 端到端验证。
 #
 # 和 scripts/e2e.sh 的区别：这里所有东西都真跑在容器里 ——
 # 镜像构建、distroless 非 root 运行、容器健康检查、容器间网络、
@@ -13,13 +13,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK="$(mktemp -d /tmp/w2a-e2e-docker.XXXXXX)"
+WORK="$(mktemp -d /tmp/f2a-e2e-docker.XXXXXX)"
 
-IMAGE="${E2E_IMAGE:-webhook2any:test}"
-NET="w2a-e2e-net"
-APP="w2a-e2e"
-MOCK="w2a-e2e-mock"
-VOL="w2a-e2e-data"
+IMAGE="${E2E_IMAGE:-forward2any:test}"
+NET="f2a-e2e-net"
+APP="f2a-e2e"
+MOCK="f2a-e2e-mock"
+VOL="f2a-e2e-data"
 
 APP_PORT="${E2E_APP_PORT:-18080}"
 ADMIN_USER="admin"
@@ -78,7 +78,7 @@ class H(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(n)
         print('PATH ' + self.path, flush=True)
-        for k in ('Content-Type', 'X-W2A-Token', 'X-W2A-Hops', 'X-W2A-Trace', 'X-Target'):
+        for k in ('Content-Type', 'X-F2A-Token', 'X-F2A-Hops', 'X-F2A-Trace', 'X-Target'):
             v = self.headers.get(k)
             if v:
                 print('%s: %s' % (k, v), flush=True)
@@ -101,12 +101,12 @@ docker start "$MOCK" >/dev/null
 pass "mock 接收器容器已启动（$MOCK，容器网络内 :9090）"
 
 docker run -d --name "$APP" --network "$NET" \
-  -p "${APP_PORT}:8080" \
+  -p "${APP_PORT}:16000" \
   -v "${VOL}:/data" \
-  -e W2A_PORT=8080 \
-  -e W2A_ADMIN_USER="$ADMIN_USER" \
-  -e W2A_ADMIN_PASSWORD="$ADMIN_PASS" \
-  -e W2A_BASE_URL="$BASE" \
+  -e F2A_PORT=16000 \
+  -e F2A_ADMIN_USER="$ADMIN_USER" \
+  -e F2A_ADMIN_PASSWORD="$ADMIN_PASS" \
+  -e F2A_BASE_URL="$BASE" \
   "$IMAGE" >/dev/null
 
 ok=0
@@ -117,7 +117,7 @@ while [ "$i" -lt 100 ]; do
   i=$((i + 1))
 done
 [ "$ok" = "1" ] || fail "容器没有在 30 秒内就绪"
-pass "服务已就绪（宿主 $BASE → 容器 :8080）"
+pass "服务已就绪（宿主 $BASE → 容器 :16000）"
 
 # distroless 里没有 shell，所以只能用镜像元数据确认运行身份
 RUNUSER=$(docker inspect "$APP" --format '{{.Config.User}}')
@@ -128,7 +128,7 @@ echo
 echo "== 登录 =="
 curl -fsS -c "$JAR" -b "$JAR" -o /dev/null \
   -d "username=$ADMIN_USER&password=$ADMIN_PASS" "$BASE/login"
-grep -q w2a_session "$JAR" || fail "登录后没有拿到会话 cookie"
+grep -q f2a_session "$JAR" || fail "登录后没有拿到会话 cookie"
 pass "登录成功"
 
 echo
@@ -140,7 +140,7 @@ post_form \
   --data-urlencode "enabled=1" \
   --data-urlencode "slug=gh-docker" \
   --data-urlencode "auth_mode=token" \
-  --data-urlencode "auth_header=X-W2A-Token" \
+  --data-urlencode "auth_header=X-F2A-Token" \
   --data-urlencode "auth_secret=docker-secret" \
   --data-urlencode "ip_allow=" \
   --data-urlencode "headers={}" \
@@ -184,7 +184,7 @@ echo
 echo "== 容器内转发链路 =="
 code=$(curl -s -o "$WORK/hook.out" -w '%{http_code}' -X POST \
   -H 'Content-Type: application/json' \
-  -H 'X-W2A-Token: docker-secret' \
+  -H 'X-F2A-Token: docker-secret' \
   -d '{"action":"push","repository":{"full_name":"a/b"}}' \
   "$BASE/hook/gh-docker")
 [ "$code" = "202" ] || fail "接收端点应返回 202，实际 $code"
@@ -200,7 +200,7 @@ while [ "$i" -lt 50 ]; do
 done
 [ "$ok" = "1" ] || fail "mock 容器没有收到转发：$(docker logs "$MOCK" 2>&1 | tail -10)"
 docker logs "$MOCK" 2>&1 | grep -q 'PATH /sink' || fail "转发路径不对"
-docker logs "$MOCK" 2>&1 | grep -q 'X-W2A-Hops: gh-docker' || fail "转发缺少跳链头"
+docker logs "$MOCK" 2>&1 | grep -q 'X-F2A-Hops: gh-docker' || fail "转发缺少跳链头"
 docker logs "$MOCK" 2>&1 | grep -q 'X-Target: mock' || fail "源上配置的固定请求头没带上"
 pass "容器间转发成功：报文原样透传，跳链与自定义请求头都在"
 
@@ -253,14 +253,14 @@ post_form \
   --data-urlencode "log_retention_days=30" \
   "$BASE/settings"
 sleep 2
-inport=$(docker exec "$APP" /w2a healthcheck >/dev/null 2>&1 && echo yes || echo no)
+inport=$(docker exec "$APP" /f2a healthcheck >/dev/null 2>&1 && echo yes || echo no)
 [ "$inport" = "yes" ] || fail "容器内改端口后，健康检查自己探不到了"
 pass "容器内改端口后，healthcheck 自动跟随到 9099（证明端口确实换了、且检查读的是库里的值）"
 
 echo
 echo "== 数据落盘位置 =="
 docker run --rm -v "${VOL}:/data" alpine sh -c 'ls -l /data' > "$WORK/vol.txt" 2>&1
-grep -q "w2a.db" "$WORK/vol.txt" || fail "命名卷里没有数据库文件：$(cat "$WORK/vol.txt")"
+grep -q "f2a.db" "$WORK/vol.txt" || fail "命名卷里没有数据库文件：$(cat "$WORK/vol.txt")"
 pass "数据在命名卷 $VOL 里：$(grep -c . "$WORK/vol.txt") 个文件"
 
 echo

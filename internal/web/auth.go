@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 const (
-	sessionCookie = "w2a_session"
+	sessionCookie = "f2a_session"
 	sessionTTL    = 7 * 24 * time.Hour
 )
 
@@ -142,6 +142,26 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// requirePasswordChanged 在管理员仍使用默认密码时，把后台其它页面全部挡回设置页。
+//
+// 默认密码是为了「起来就能登」的便利，但一个公网可达的后台配默认密码等于敞开大门，
+// 所以用一次强制修改把这个便利限制在首次登录。
+// 设置页本身（含导出/导入）放行，否则用户没法完成改密。
+func (s *Server) requirePasswordChanged(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.passIsDefault.Load() || strings.HasPrefix(r.URL.Path, "/settings") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/settings")
+			w.WriteHeader(http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/settings?ok=must_change_password", http.StatusSeeOther)
 	})
 }
 

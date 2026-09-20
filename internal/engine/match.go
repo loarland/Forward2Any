@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // Match 判断载荷是否满足规则的全部过滤条件（多条之间 AND）。

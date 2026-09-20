@@ -1,4 +1,4 @@
-module github.com/loarland/Webhook2Any
+module github.com/loarland/Forward2Any
 
 go 1.27
 

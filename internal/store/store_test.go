@@ -14,14 +14,14 @@ func TestBootstrapSeedsOnlyOnce(t *testing.T) {
 	}
 	defer st.Close()
 
-	gen, err := st.Bootstrap(BootstrapInput{
+	usedDefault, err := st.Bootstrap(BootstrapInput{
 		Port: 18080, AdminUser: "alice", AdminPass: "pw-123456", BaseURL: "http://example.test",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gen != "" {
-		t.Errorf("显式提供了密码就不该再随机生成，得到 %q", gen)
+	if usedDefault {
+		t.Error("显式提供了密码，就不该标记为「使用默认密码」")
 	}
 
 	s, err := st.Settings()
@@ -62,37 +62,77 @@ func TestBootstrapSeedsOnlyOnce(t *testing.T) {
 	}
 }
 
-func TestBootstrapGeneratesPasswordWhenNoneGiven(t *testing.T) {
+// 不给密码时落到默认密码，并标记出来（后台据此强制改密）。
+func TestBootstrapFallsBackToDefaultPassword(t *testing.T) {
 	st, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
 
-	in := BootstrapInput{Port: 8080, AdminUser: "admin", BaseURL: "http://localhost:8080"}
-	gen, err := st.Bootstrap(in)
+	in := BootstrapInput{Port: 16000, AdminUser: "admin", BaseURL: "http://localhost:16000"}
+	usedDefault, err := st.Bootstrap(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gen) != 16 {
-		t.Fatalf("应当随机生成 16 位密码，得到 %q", gen)
+	if !usedDefault {
+		t.Error("没有提供密码时应当标记为「使用默认密码」")
 	}
 
 	s, err := st.Settings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !CheckPassword(s.AdminPassHash, gen) {
-		t.Error("生成的密码校验不过")
+	if !s.AdminPassDefault {
+		t.Error("AdminPassDefault 应当为真")
+	}
+	if !CheckPassword(s.AdminPassHash, DefaultAdminPassword) {
+		t.Errorf("默认密码应当是 %q", DefaultAdminPassword)
 	}
 
-	// 已有密码时不该再生成新的（否则每次重启都会换密码）
-	gen2, err := st.Bootstrap(in)
+	// 再次启动不该改变任何东西
+	usedDefault2, err := st.Bootstrap(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gen2 != "" {
-		t.Errorf("已有密码时不该再生成，得到 %q", gen2)
+	if !usedDefault2 {
+		t.Error("没改过密码时，重启后仍应标记为使用默认密码")
+	}
+}
+
+// 改过密码之后，标记必须清掉，否则后台会一直被锁在设置页。
+func TestBootstrapDefaultFlagClearedAfterPasswordChange(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	in := BootstrapInput{Port: 16000, AdminUser: "admin", BaseURL: "http://localhost:16000"}
+	if _, err := st.Bootstrap(in); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := HashPassword("a-real-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AdminPassHash = hash
+	s.AdminPassDefault = false
+	if err := st.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	usedDefault, err := st.Bootstrap(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usedDefault {
+		t.Error("密码已改过，重启后不该再标记为使用默认密码")
 	}
 }
 

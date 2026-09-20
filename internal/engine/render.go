@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // TemplateData 是规则模板里可用的数据。
@@ -127,7 +127,7 @@ func DefaultSubject(in *store.Source, data *TemplateData) string {
 		}
 		return prefix + " " + truncateRunes(line, 80)
 	}
-	return prefix + " Webhook2Any 转发"
+	return prefix + " Forward2Any 转发"
 }
 
 // Truncate 按字节上限截断，且不切碎多字节字符。

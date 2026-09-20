@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

@@ -110,7 +110,7 @@ func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建数据目录: %w", err)
 	}
-	path := filepath.Join(dataDir, "w2a.db")
+	path := filepath.Join(dataDir, "f2a.db")
 
 	// WAL + busy_timeout 让「后台读」和「投递写」可以并发；
 	// _txlock=immediate 让写事务一开始就拿写锁，避免升级锁时 SQLITE_BUSY。

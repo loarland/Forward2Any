@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/loarland/Webhook2Any/internal/engine"
-	"github.com/loarland/Webhook2Any/internal/mailin"
-	"github.com/loarland/Webhook2Any/internal/store"
-	"github.com/loarland/Webhook2Any/internal/web/ui"
+	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/mailin"
+	"github.com/loarland/Forward2Any/internal/store"
+	"github.com/loarland/Forward2Any/internal/web/ui"
 )
 
 type Server struct {
@@ -28,6 +29,10 @@ type Server struct {
 	sessions *sessionStore
 	limiter  *loginLimiter
 
+	// passIsDefault 为真时后台只开放设置页，逼迫用户先改掉默认密码。
+	// 用原子变量缓存，免得每个请求都去查一次设置。
+	passIsDefault atomic.Bool
+
 	mu   sync.Mutex
 	srv  *http.Server
 	ln   net.Listener
@@ -35,7 +40,7 @@ type Server struct {
 }
 
 func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.Poller) *Server {
-	return &Server{
+	s := &Server{
 		store:    st,
 		log:      log,
 		engine:   eng,
@@ -43,6 +48,19 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 		sessions: newSessionStore(),
 		limiter:  newLoginLimiter(),
 	}
+	s.refreshPassFlag()
+	return s
+}
+
+// refreshPassFlag 同步「是否仍在使用默认密码」的缓存。
+// 启动时和改过密码之后各调一次。
+func (s *Server) refreshPassFlag() {
+	settings, err := s.store.Settings()
+	if err != nil {
+		s.log.Error("读取设置失败，无法判断是否为默认密码", "err", err)
+		return
+	}
+	s.passIsDefault.Store(settings.AdminPassDefault)
 }
 
 // reloadMail 让邮件轮询器重新比对一遍数据库里的邮件接收源。
@@ -79,7 +97,8 @@ func (s *Server) adminMux() http.Handler {
 	s.registerDeliveries(mux)
 	s.registerSettings(mux)
 
-	return s.requireAuth(s.guard(mux))
+	// 先认证，再挡跨站写请求，最后检查默认密码。
+	return s.requireAuth(s.guard(s.requirePasswordChanged(mux)))
 }
 
 // ---------- 监听端口生命周期 ----------
@@ -167,11 +186,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // flashMessages 把 query 里的短码映射成固定文案。
 // 直接回显 query 内容会把任意文本反射进页面，不值当。
 var flashMessages = map[string]string{
-	"saved":    "已保存",
-	"deleted":  "已删除",
-	"replayed": "已重新入队，稍后可在日志里看到结果",
-	"imported": "导入完成",
-	"tested":   "测试已发送，请在投递日志里看结果",
+	"saved":                "已保存",
+	"deleted":              "已删除",
+	"replayed":             "已重新入队，稍后可在日志里看到结果",
+	"imported":             "导入完成",
+	"tested":               "测试已发送，请在投递日志里看结果",
+	"password_changed":     "密码已修改，后台已全部解锁",
+	"must_change_password": "你仍在使用默认密码，请先修改后再使用其它功能",
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
@@ -179,12 +200,19 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 		data = map[string]any{}
 	}
 	if _, ok := data["Title"]; !ok {
-		data["Title"] = "Webhook2Any"
+		data["Title"] = "Forward2Any"
 	}
 	if _, ok := data["Flash"]; !ok {
 		if msg, ok := flashMessages[r.URL.Query().Get("ok")]; ok {
 			data["Flash"] = msg
 		}
+	}
+	// 布局里据此显示「仍在使用默认密码」的告警条。
+	if _, ok := data["DefaultPassword"]; !ok {
+		data["DefaultPassword"] = s.passIsDefault.Load()
+	}
+	if _, ok := data["DefaultPasswordValue"]; !ok {
+		data["DefaultPasswordValue"] = store.DefaultAdminPassword
 	}
 
 	// 先渲染到内存：模板出错时还能干净地返回 500，而不是半截 HTML。
