@@ -430,3 +430,60 @@ func TestCleanupKeepsUnfinishedDeliveries(t *testing.T) {
 		}
 	}
 }
+
+// 外观设置是 KV 表里的两个新键，不加迁移 —— 老库读不到就用默认值，写一次就有。
+func TestThemeSettingsRoundTrip(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 全新库里没有这两个键，应当拿到默认值。
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ThemeColor != "blue" || s.ThemeMode != "auto" {
+		t.Errorf("默认外观应为 blue/auto，实际 %q/%q", s.ThemeColor, s.ThemeMode)
+	}
+
+	s.ThemeColor = "jade"
+	s.ThemeMode = "dark"
+	if err := st.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ThemeColor != "jade" || again.ThemeMode != "dark" {
+		t.Errorf("外观没存住：%q/%q", again.ThemeColor, again.ThemeMode)
+	}
+
+	// 只改外观不该动到别的设置。
+	if again.WebPort != s.WebPort || again.BaseURL != s.BaseURL {
+		t.Error("保存外观时改动了其它设置")
+	}
+}
+
+// Bootstrap 第一次跑要把外观的默认值种进库，否则「首次启动」的判断会一直认为缺键。
+func TestBootstrapSeedsTheme(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Bootstrap(BootstrapInput{Port: 16000, AdminUser: "admin", AdminPass: "pw12345678"}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.raw[KeyThemeColor]; !ok {
+		t.Error("Bootstrap 应当把 theme_color 种进库")
+	}
+	if _, ok := s.raw[KeyThemeMode]; !ok {
+		t.Error("Bootstrap 应当把 theme_mode 种进库")
+	}
+}

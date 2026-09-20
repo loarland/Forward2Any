@@ -1,0 +1,50 @@
+/* Pico CSS v2.1.1 的「indigo」配色，由 scripts/gen-palettes.py 从官方文件抽出。
+   只含主色族变量，叠在 pico.min.css 之后即可整套换色 —— 这样不用把 20 份
+   87KB 的完整主题都编进二进制。改 Pico 版本时重跑那个脚本，别手改这个文件。 */
+
+:root:not([data-theme=dark]) {
+  --pico-primary: #655cd6;
+  --pico-primary-background: #524ed2;
+  --pico-primary-border: var(--pico-primary-background);
+  --pico-primary-focus: rgba(148, 134, 225, 0.5);
+  --pico-primary-hover: #4040bf;
+  --pico-primary-hover-background: #4040bf;
+  --pico-primary-hover-border: var(--pico-primary-hover-background);
+  --pico-primary-hover-underline: var(--pico-primary-hover);
+  --pico-primary-inverse: #fff;
+  --pico-primary-underline: rgba(101, 92, 214, 0.5);
+  --pico-switch-thumb-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --pico-text-selection-color: rgba(148, 134, 225, 0.25);
+}
+
+[data-theme=dark] {
+  --pico-primary: #a294e5;
+  --pico-primary-background: #524ed2;
+  --pico-primary-border: var(--pico-primary-background);
+  --pico-primary-focus: rgba(162, 148, 229, 0.375);
+  --pico-primary-hover: #bdb2ec;
+  --pico-primary-hover-background: #655cd6;
+  --pico-primary-hover-border: var(--pico-primary-hover-background);
+  --pico-primary-hover-underline: var(--pico-primary-hover);
+  --pico-primary-inverse: #fff;
+  --pico-primary-underline: rgba(162, 148, 229, 0.5);
+  --pico-switch-thumb-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --pico-text-selection-color: rgba(162, 148, 229, 0.1875);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --pico-primary: #a294e5;
+    --pico-primary-background: #524ed2;
+    --pico-primary-border: var(--pico-primary-background);
+    --pico-primary-focus: rgba(162, 148, 229, 0.375);
+    --pico-primary-hover: #bdb2ec;
+    --pico-primary-hover-background: #655cd6;
+    --pico-primary-hover-border: var(--pico-primary-hover-background);
+    --pico-primary-hover-underline: var(--pico-primary-hover);
+    --pico-primary-inverse: #fff;
+    --pico-primary-underline: rgba(162, 148, 229, 0.5);
+    --pico-switch-thumb-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    --pico-text-selection-color: rgba(162, 148, 229, 0.1875);
+  }
+}

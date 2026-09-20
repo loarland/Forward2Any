@@ -37,6 +37,8 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, errMsg, 
 		"DBPath":      s.store.Path,
 		"Error":       errMsg,
 		"Notice":      notice,
+		"Palettes":    palettes,
+		"ThemeModes":  themeModes,
 	})
 }
 
@@ -60,6 +62,13 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	next.RetryBackoffSeconds = formInt(r, "retry_backoff_seconds", current.RetryBackoffSeconds)
 	next.PayloadMaxBytes = formInt(r, "payload_max_bytes", current.PayloadMaxBytes)
 	next.LogRetentionDays = formInt(r, "log_retention_days", current.LogRetentionDays)
+	// 外观的两个值都按白名单校验，不合法就保持原样 —— 它们会进 <link href>。
+	if v := formValue(r, "theme_color"); validThemeColor(v) {
+		next.ThemeColor = v
+	}
+	if v := formValue(r, "theme_mode"); validThemeMode(v) {
+		next.ThemeMode = v
+	}
 
 	if err := validateSettings(&next); err != nil {
 		s.renderSettings(w, r, err.Error(), "")
@@ -102,6 +111,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// 改完密码后台就该解锁，不必等重启。
 		s.refreshPassFlag()
 	}
+	// 换配色/亮暗同样立刻生效，不用重启进程。
+	s.refreshTheme()
 	s.log.Info("更新设置", "端口", next.WebPort, "管理员", next.AdminUser)
 
 	if next.WebPort != oldPort {

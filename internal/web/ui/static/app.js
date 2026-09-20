@@ -391,6 +391,39 @@
     apply();
   });
 
+  // 6) 设置页的外观实时预览。
+  //    只改 <html data-theme> 和那一个 <link id=palette> 的 href —— 布局里的
+  //    href 本来就是服务端按当前设置渲染的，所以这段纯粹是「还没保存也能看」。
+  //    不保存就离开页面的话，预览随页面一起丢掉，不会串到别的页面。
+  (function () {
+    var colorEl = document.querySelector('[data-theme-color]');
+    var modeEl = document.querySelector('[data-theme-mode]');
+    var link = document.getElementById('palette');
+    if (!colorEl && !modeEl) {
+      return;
+    }
+    function apply() {
+      if (link && colorEl) {
+        link.href = '/static/palettes/' + colorEl.value + '.css';
+      }
+      if (modeEl) {
+        // auto 时不写这个属性，让 Pico 去跟随 prefers-color-scheme。
+        if (modeEl.value === 'auto') {
+          document.documentElement.removeAttribute('data-theme');
+        } else {
+          document.documentElement.setAttribute('data-theme', modeEl.value);
+        }
+      }
+    }
+    if (colorEl) {
+      colorEl.addEventListener('change', apply);
+    }
+    if (modeEl) {
+      modeEl.addEventListener('change', apply);
+    }
+    apply();
+  })();
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

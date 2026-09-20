@@ -30,6 +30,8 @@ const (
 	KeyRetryBackoffSeconds = "retry_backoff_seconds"
 	KeyPayloadMaxBytes     = "payload_max_bytes"
 	KeyLogRetentionDays    = "log_retention_days"
+	KeyThemeColor          = "theme_color"
+	KeyThemeMode           = "theme_mode"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -43,6 +45,8 @@ type Settings struct {
 	RetryBackoffSeconds int
 	PayloadMaxBytes     int
 	LogRetentionDays    int
+	ThemeColor          string // palettes/ 下的配色名
+	ThemeMode           string // auto / light / dark
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -57,6 +61,8 @@ func DefaultSettings() *Settings {
 		RetryBackoffSeconds: 10,
 		PayloadMaxBytes:     65536,
 		LogRetentionDays:    30,
+		ThemeColor:          "blue",
+		ThemeMode:           "auto",
 	}
 }
 
@@ -92,6 +98,8 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyRetryBackoffSeconds, strconv.Itoa(exist.RetryBackoffSeconds))
 	setIfMissing(KeyPayloadMaxBytes, strconv.Itoa(exist.PayloadMaxBytes))
 	setIfMissing(KeyLogRetentionDays, strconv.Itoa(exist.LogRetentionDays))
+	setIfMissing(KeyThemeColor, exist.ThemeColor)
+	setIfMissing(KeyThemeMode, exist.ThemeMode)
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -139,6 +147,8 @@ func (s *Store) Settings() (*Settings, error) {
 	d.RetryBackoffSeconds = atoi(get(KeyRetryBackoffSeconds, strconv.Itoa(d.RetryBackoffSeconds)), d.RetryBackoffSeconds)
 	d.PayloadMaxBytes = atoi(get(KeyPayloadMaxBytes, strconv.Itoa(d.PayloadMaxBytes)), d.PayloadMaxBytes)
 	d.LogRetentionDays = atoi(get(KeyLogRetentionDays, strconv.Itoa(d.LogRetentionDays)), d.LogRetentionDays)
+	d.ThemeColor = get(KeyThemeColor, d.ThemeColor)
+	d.ThemeMode = get(KeyThemeMode, d.ThemeMode)
 	d.raw = raw
 	return d, nil
 }
@@ -198,6 +208,8 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyRetryBackoffSeconds: strconv.Itoa(v.RetryBackoffSeconds),
 		KeyPayloadMaxBytes:     strconv.Itoa(v.PayloadMaxBytes),
 		KeyLogRetentionDays:    strconv.Itoa(v.LogRetentionDays),
+		KeyThemeColor:          v.ThemeColor,
+		KeyThemeMode:           v.ThemeMode,
 	})
 }
 

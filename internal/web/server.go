@@ -33,6 +33,9 @@ type Server struct {
 	// 用原子变量缓存，免得每个请求都去查一次设置。
 	passIsDefault atomic.Bool
 
+	// theme 缓存当前外观（配色 + 亮暗）。同样是为了免掉每个请求一次查库。
+	theme atomic.Value
+
 	mu   sync.Mutex
 	srv  *http.Server
 	ln   net.Listener
@@ -49,6 +52,7 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 		limiter:  newLoginLimiter(),
 	}
 	s.refreshPassFlag()
+	s.refreshTheme()
 	return s
 }
 
@@ -234,6 +238,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 	}
 	if _, ok := data["DefaultPasswordValue"]; !ok {
 		data["DefaultPasswordValue"] = store.DefaultAdminPassword
+	}
+	// 外观由布局统一用，所以在这里注入一次，每个页面都拿得到。
+	// 值已经过 refreshTheme 的白名单校验，不会把任意字符串拼进 <link href>。
+	if _, ok := data["ThemeColor"]; !ok {
+		theme := s.themeChoice()
+		data["ThemeColor"] = theme.Color
+		data["ThemeMode"] = theme.Mode
 	}
 
 	// 先渲染到内存：模板出错时还能干净地返回 500，而不是半截 HTML。

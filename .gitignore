@@ -13,3 +13,7 @@
 .DS_Store
 .idea/
 .vscode/
+
+# Python（scripts/ 下的辅助脚本）
+__pycache__/
+*.pyc

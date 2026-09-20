@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>设置</h1>
-    <div class="sub">监听端口、管理员账号、重试策略与配置导入导出</div>
+    <div class="sub">监听端口、管理员账号、外观、重试策略与配置导入导出</div>
   </div>
 </div>
 
@@ -53,6 +53,34 @@
     「报文保存上限」指的是每条投递记录最多存多少字节的报文，超出的部分会被截断后入库。
     <br>
     数据库文件：<span class="mono">{{.DBPath}}</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>外观</h2>
+  <div class="grid2">
+    <label>
+      <span>配色 <span class="hint">共 {{len .Palettes}} 种，改完立刻能预览</span></span>
+      <select name="theme_color" data-theme-color>
+        {{range .Palettes}}
+        <option value="{{.Name}}" {{if eq .Name $.S.ThemeColor}}selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      <span>亮暗</span>
+      <select name="theme_mode" data-theme-mode>
+        {{range .ThemeModes}}
+        <option value="{{.Name}}" {{if eq .Name $.S.ThemeMode}}selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </label>
+  </div>
+  <div class="note">
+    配色来自 <a href="https://picocss.com" target="_blank" rel="noreferrer noopener">Pico CSS</a> 的官方主题，
+    只换主题色，版式不变。<strong>「跟随系统」会跟着你操作系统的深色模式走</strong>，想固定就选浅色或深色。
+    <br>
+    选完这里就能看到效果（还没保存）；点下面的「保存设置」才会写进配置、对所有浏览器生效。
   </div>
 </div>
 

@@ -1,5 +1,7 @@
 {{define "layout"}}<!DOCTYPE html>
-<html lang="zh-CN">
+{{/* 外观：auto 时不写 data-theme，交给 Pico 跟随系统（prefers-color-scheme）；
+     light / dark 时写死，Pico 的 conditional 构建认这两个值。 */}}
+<html lang="zh-CN"{{if ne .ThemeMode "auto"}} data-theme="{{.ThemeMode}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,12 +9,15 @@
      在这里先把标记挂上去，CSS 才能从首屏起就对，不会先闪一下再换样。 */}}
 <script>document.documentElement.className += ' js';</script>
 <title>{{.Title}} · Forward2Any</title>
-{{/* 样式分三层，顺序不能换：
-       pico.min.css  底座 —— 表单/表格/排版的默认样式，也是主题色和亮暗两套配色的来源
-       theme.css     令牌 —— 把颜色收成 --x 变量，品牌色指向 --pico-*
-       app.css       结构 —— 只写布局和组件，颜色一律取令牌
-     换外观改前两个，第三个不用动。 */}}
+{{/* 样式分四层，顺序不能换：
+       pico.min.css           底座 —— 表单/表格/排版的默认样式，也是亮暗两套配色的来源
+       palettes/<配色>.css     配色 —— 只含主色族变量，叠在底座上换掉整套主题色
+       theme.css              令牌 —— 把颜色收成 --x 变量，品牌色指向 --pico-*
+       app.css                结构 —— 只写布局和组件，颜色一律取令牌
+     换外观改前两个，后两个不用动。 */}}
 <link rel="stylesheet" href="/static/pico.min.css">
+{{/* id 是给设置页的实时预览用的：改下拉框时 app.js 只换这一个 href。 */}}
+<link id="palette" rel="stylesheet" href="/static/palettes/{{.ThemeColor}}.css">
 <link rel="stylesheet" href="/static/theme.css">
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>

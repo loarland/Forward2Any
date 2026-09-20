@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -587,5 +588,146 @@ func TestThemeTokensCoverAppCSS(t *testing.T) {
 	stripped := regexp.MustCompile(`var\(--[a-z0-9-]+\)`).ReplaceAllString(string(app), "")
 	if m := regexp.MustCompile(`#[0-9a-fA-F]{3,6}\b`).FindString(stripped); m != "" {
 		t.Errorf("app.css 里还有硬编码颜色 %s，应当挪到 theme.css", m)
+	}
+}
+
+// ---------- 主题 / 配色 ----------
+
+// testServer 给那些只需要一个能渲染/能记日志的 Server 的测试用。
+// log 不能留 nil：渲染失败时 render 会去记日志，nil 会把真正的模板错误盖成 panic。
+func testServer() *Server {
+	return &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+// palettes 那张表是配色名的唯一权威，必须和目录里的文件严格一一对应：
+// 少登记一个 → 有文件但选不到；多登记一个 → 下拉框里选了会 404。
+func TestThemePalettesMatchFiles(t *testing.T) {
+	files, err := paletteFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inList := map[string]bool{}
+	for _, p := range palettes {
+		inList[p.Name] = true
+		if p.Label == "" {
+			t.Errorf("配色 %s 没有中文名", p.Name)
+		}
+	}
+	for _, f := range files {
+		if !inList[f] {
+			t.Errorf("有配色文件 %s.css 但没登记在 palettes 里，用户选不到", f)
+		}
+	}
+	onDisk := map[string]bool{}
+	for _, f := range files {
+		onDisk[f] = true
+	}
+	for _, p := range palettes {
+		if !onDisk[p.Name] {
+			t.Errorf("palettes 里登记了 %s 但没有 static/palettes/%s.css", p.Name, p.Name)
+		}
+	}
+	if !inList[DefaultThemeColor] {
+		t.Errorf("默认配色 %s 不在列表里", DefaultThemeColor)
+	}
+	if len(files) < 2 {
+		t.Errorf("配色文件只有 %d 个，像是没生成", len(files))
+	}
+}
+
+func TestThemeValueValidation(t *testing.T) {
+	if !validThemeColor(DefaultThemeColor) {
+		t.Error("默认配色应当合法")
+	}
+	if !validThemeMode(DefaultThemeMode) {
+		t.Error("默认亮暗应当合法")
+	}
+	// 这两个值会进 <link href> 和 <html data-theme>，必须挡住任意字符串。
+	for _, bad := range []string{"", "nope", "../app", "blue.css", "'; alert(1); //"} {
+		if validThemeColor(bad) {
+			t.Errorf("%q 不该被当成合法配色", bad)
+		}
+	}
+	for _, bad := range []string{"", "nope", "Dark", "auto light"} {
+		if validThemeMode(bad) {
+			t.Errorf("%q 不该被当成合法亮暗", bad)
+		}
+	}
+}
+
+// 外观必须出现在每个页面的布局里 —— 不然登录页和设置页会跟后台其它页长得不一样。
+func TestRenderInjectsThemeEverywhere(t *testing.T) {
+	s := testServer()
+	// 覆盖三种页面：不带顶栏的登录页、要统计数据的概览页、表单型设置页。
+	// 其余页面走的是同一个布局和同一个 render，e2e 里有整轮页面渲染的断言。
+	pages := map[string]map[string]any{
+		"login":     {"S": &store.Settings{}},
+		"dashboard": {"Stats": map[string]int{}},
+		"settings":  {"S": &store.Settings{}, "Palettes": palettes, "ThemeModes": themeModes},
+	}
+	for page, extra := range pages {
+		data := map[string]any{}
+		for k, v := range extra {
+			data[k] = v
+		}
+		rec := httptest.NewRecorder()
+		s.render(rec, httptest.NewRequest("GET", "/", nil), page, data)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s 渲染失败：%d %s", page, rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		want := "/static/palettes/" + DefaultThemeColor + ".css"
+		if !strings.Contains(body, want) {
+			t.Errorf("%s 没带上配色文件 %s", page, want)
+		}
+		// auto 档不写 data-theme，交给 Pico 跟随系统。
+		if strings.Contains(body, "data-theme=") {
+			t.Errorf("auto 档不该给 <html> 写 data-theme：%s", page)
+		}
+	}
+}
+
+// 选成 light/dark 时要把 data-theme 写出去，Pico 的 conditional 构建认这个属性。
+func TestRenderWritesExplicitThemeMode(t *testing.T) {
+	s := testServer()
+	for _, mode := range []string{"light", "dark"} {
+		s.theme.Store(themeChoice{Color: "jade", Mode: mode})
+		rec := httptest.NewRecorder()
+		s.render(rec, httptest.NewRequest("GET", "/", nil), "login", map[string]any{"S": &store.Settings{}})
+		body := rec.Body.String()
+		if !strings.Contains(body, `data-theme="`+mode+`"`) {
+			t.Errorf("%s 档应当写出 data-theme=%q", mode, mode)
+		}
+		if !strings.Contains(body, "/static/palettes/jade.css") {
+			t.Errorf("%s 档没带上选中的配色文件", mode)
+		}
+	}
+}
+
+// 库里存了非法值时不能把它拼进 href，回落到默认。
+func TestRefreshThemeFallsBackOnGarbage(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSettings(map[string]string{
+		store.KeyThemeColor: `"><script>alert(1)</script>`,
+		store.KeyThemeMode:  "banana",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.refreshTheme()
+
+	got := s.themeChoice()
+	if got.Color != DefaultThemeColor || got.Mode != DefaultThemeMode {
+		t.Errorf("非法值应当回落到默认，实际 %q/%q", got.Color, got.Mode)
+	}
+
+	rec := httptest.NewRecorder()
+	s.render(rec, httptest.NewRequest("GET", "/", nil), "login", map[string]any{"S": &store.Settings{}})
+	if strings.Contains(rec.Body.String(), "<script>alert(1)</script>") {
+		t.Error("非法配色被拼进了页面")
 	}
 }

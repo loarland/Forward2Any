@@ -219,6 +219,58 @@ for page in / /sources /rules /deliveries /settings /deliveries/1; do
 done
 pass "概览 / 源 / 规则 / 投递日志 / 详情 / 设置 全部正常渲染"
 
+# 外观（配色 + 亮暗）：三个环节都要对上 —— 设置页能选、服务端渲染的 <link> 和
+# <html data-theme> 跟着变、值非法时不能被拼进 href。
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/theme-settings.html"
+grep -q 'name="theme_color"' "$WORK/theme-settings.html" || fail "设置页没有配色下拉框"
+grep -q 'name="theme_mode"' "$WORK/theme-settings.html" || fail "设置页没有亮暗下拉框"
+theme_opts=$(grep -o 'name="theme_color"' -A 40 "$WORK/theme-settings.html" \
+  | grep -c 'value="[a-z]*"')
+[ "$theme_opts" -ge 20 ] || fail "配色选项只有 $theme_opts 个，像是没生成"
+pass "设置页能选配色（$theme_opts 种）与亮暗"
+
+# 登录页不需要会话，拿它当「服务端渲染结果」的观察窗
+curl -fsS "$BASE/login" > "$WORK/theme-before.html"
+grep -q "/static/palettes/blue.css" "$WORK/theme-before.html" || fail "默认配色应当是 blue"
+grep -q "data-theme=" "$WORK/theme-before.html" && fail "auto 档不该给 <html> 写 data-theme"
+pass "默认外观：blue 配色 + 跟随系统"
+
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "theme_color=jade" \
+  --data-urlencode "theme_mode=dark" \
+  "$BASE/settings"
+
+curl -fsS "$BASE/login" > "$WORK/theme-after.html"
+grep -q "/static/palettes/jade.css" "$WORK/theme-after.html" || fail "换配色后 <link> 没跟着变"
+grep -q 'data-theme="dark"' "$WORK/theme-after.html" || fail "换暗色后 <html> 没写 data-theme"
+pass "换配色与亮暗后，服务端渲染立刻跟着变（不用重启）"
+
+code=$(curl -s -o "$WORK/palette.css" -w '%{http_code}' "$BASE/static/palettes/jade.css")
+[ "$code" = "200" ] || fail "配色文件取不到：$code"
+grep -q -- "--pico-primary" "$WORK/palette.css" || fail "配色文件里没有主色变量"
+pass "配色文件能正常取到，且含主色变量"
+
+# 非法值必须被挡下：它要进 <link href>，不能回显任意字符串
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "theme_color=../../etc/passwd" \
+  --data-urlencode "theme_mode=banana" \
+  "$BASE/settings"
+curl -fsS "$BASE/login" > "$WORK/theme-bad.html"
+grep -q "/static/palettes/jade.css" "$WORK/theme-bad.html" || fail "非法配色应当被忽略、保持原值"
+grep -q "etc/passwd" "$WORK/theme-bad.html" && fail "非法配色被拼进了页面"
+grep -q 'data-theme="dark"' "$WORK/theme-bad.html" || fail "非法亮暗值应当被忽略、保持原值"
+pass "非法配色/亮暗值被挡下，原值不变"
+
 # 规则表单的过滤条件编辑器：可视化那半是 JS 铺的，但脚手架和操作符表必须在 HTML 里，
 # 不然 JS 一挂（或没加载）就没得选了。
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules/1/edit" > "$WORK/rule_edit.html"
