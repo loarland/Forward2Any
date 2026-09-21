@@ -25,7 +25,7 @@ Webhook、邮箱或 Telegram。
 - **单端口**：后台界面和所有 Webhook 接收端点共用同一个端口，靠路径区分。新增接收源不用开端口，
   也不用改 Docker 配置和防火墙。
 - **单二进制**：整个程序（含后台界面）编译成一个静态文件，Docker 镜像约 18MB，
-  以 distroless 非 root 运行，前端不引入 npm 构建链。
+  基于 distroless，前端不引入 npm 构建链。
 - **不丢消息**：投递失败按指数退避自动重试，进程重启后自动接管未完成的投递，失败的可手动重放。
 
 适合有自己的 VPS / NAS，想给 CI、监控告警、表单、邮件做一层统一转发的场景。
@@ -141,8 +141,7 @@ docker compose up -d
 
 `.env.example` 里每一项都有注释，常用的几项：`F2A_HOST_PORT`（宿主端口）、`F2A_BASE_URL`
 （回调基址）、`F2A_ADMIN_PASSWORD`、`F2A_DATA_DIR`（数据目录）、`F2A_UID` / `F2A_GID`
-（容器进程身份，见[数据与备份](#数据与备份)）。需要 Docker Compose v2.1 以上
-（`docker-compose.yml` 用了 `depends_on` 的完成条件）。
+（容器进程身份，默认 `0`，见[数据与备份](#数据与备份)）。
 
 `docker-compose.yml` 默认用 `image: ghcr.io/loarland/forward2any:latest`（先拉再起）。
 不 clone 仓库的话直接 `docker run`：
@@ -151,6 +150,7 @@ docker compose up -d
 docker run -d --name forward2any --restart unless-stopped \
   -p 16000:16000 \
   -v f2a-data:/data \
+  --user 0 \
   -e F2A_BASE_URL="https://hooks.example.com" \
   -e F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
   ghcr.io/loarland/forward2any:latest
@@ -608,7 +608,7 @@ URL 带路径，所以这一个端口就够了。
 
 compose 的 `.env` 里还有几个**只有 docker-compose.yml 用**的项，进程读不到它们：
 `F2A_HOST_PORT`（映射到宿主机哪个端口）、`F2A_DATA_DIR`（挂哪个卷或目录，容器里始终是 `/data`）、
-`F2A_UID` / `F2A_GID`（容器进程身份）。
+`F2A_UID` / `F2A_GID`（容器进程身份，默认 `0`）。
 
 ## 数据与备份
 
@@ -626,13 +626,13 @@ compose 的 `.env` 里还有几个**只有 docker-compose.yml 用**的项，进�
 换一台机器导入不会串号。
 
 **Docker 换宿主机目录**：默认的命名卷要再挂一次容器才看得到，想在宿主机上直接看到文件就在
-`.env` 里设 `F2A_DATA_DIR=./data`，然后 `docker compose up -d`。数据目录的属主由 `init-data`
-容器在每次启动前对齐到容器进程的 uid（默认 65532）—— 宿主机目录在 Linux 上常常是 root 属主，
-非 root 进程自己没权限 chown，所以这一步放在一个一次性的 root 容器里做，不需要 `sudo chown`。
+`.env` 里设 `F2A_DATA_DIR=./data`，然后 `docker compose up -d`。容器默认以 root 跑，宿主目录
+不需要先 `chown`；**数据文件属主也是 root**，Linux 上直接 `cat` / `tar` 要 sudo。
 
-Linux 上想让数据文件归自己（备份时不用 sudo），把 uid 一并写进 `.env`：
+想让数据文件归自己（备份不用 sudo）就在 `.env` 里填自己的 uid / gid，目录也由自己创建：
 
 ```bash
+mkdir -p ./data
 printf 'F2A_UID=%s\nF2A_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 docker compose up -d
 ```
@@ -648,12 +648,12 @@ docker run --rm -v forward2any_f2a-data:/data -v "$PWD:/backup" alpine \
 docker run --rm -v forward2any_f2a-data:/data -v "$PWD:/backup" alpine \
   tar xzf /backup/f2a-2026-01-02.tar.gz -C /data
 
-# 宿主机目录（F2A_DATA_DIR=./data）
-tar czf f2a-$(date +%F).tar.gz -C ./data .
+# 宿主机目录（F2A_DATA_DIR=./data），数据文件属主是 root
+sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
 ```
 
-> 用 `docker run` 手动起容器没有 `init-data` 这步：挂宿主机目录时要自己
-> `sudo chown -R 65532:65532 ./data`，或者加 `--user "$(id -u):$(id -g)"` 让进程用你的身份跑。
+> `docker run` 不读 compose 里的配置：镜像默认以 nonroot（65532）运行，挂宿主机目录时要么加
+> `--user 0`，要么 `sudo chown -R 65532:65532 ./data`。
 
 ## 安全说明
 
@@ -667,11 +667,14 @@ tar czf f2a-$(date +%F).tar.gz -C ./data .
   未知路径一律 404，不区分「不存在」和「已停用」。
 - HMAC 与密钥比对用常量时间比较；入站报文内存读取上限 10MB。
 - **数据库文件权限 0600** —— 里面存着 Webhook 密钥、邮箱密码和 Telegram Bot Token。
-- 容器以非 root 运行，基础镜像是 distroless（无 shell、无包管理器）。
+- 基础镜像是 distroless（无 shell、无包管理器）；一键脚本 / 手动装二进制的以专用用户 `f2a` 运行。
 - **Telegram Bot Token 不会出现在投递日志里**（落库前抹成 `***`）。
 
 需要自己注意的：
 
+- **Docker Compose 里容器默认以 root 运行**（镜像本身是 nonroot，compose 用 `user: 0` 覆盖），
+  为的是宿主机目录不用先 chown。要在意这点就在 `.env` 里把 `F2A_UID` / `F2A_GID` 设成非 0，
+  并保证数据目录属主与它一致。
 - **程序只提供明文 HTTP**，暴露到公网请务必套反向代理上 TLS。
 - **IP 白名单校验的是直连对端地址**，不是可以伪造的 `X-Forwarded-For`。放在反向代理后面时，
   白名单要填代理的地址；要按真实客户端 IP 限制，请在代理层做。
@@ -827,10 +830,9 @@ journalctl -u forward2any -n 50 --no-pager
 - `address already in use`：端口被占了，换 `F2A_PORT`（`ss -ltnp | grep 16000` 看是谁占的）。
 - `permission denied` 打不开数据库：数据目录属主不对，应该是 `f2a:f2a` 且 0700
   （`chown -R f2a:f2a /var/lib/forward2any`）。
-- Docker 报 `启动失败: 连接数据库: unable to open database file (14)`：数据目录写不进去。
-  compose 起的先看 `docker compose logs init-data` —— 这一步负责把属主改成 `F2A_UID`，
-  宿主机目录在 Linux 上还要 Docker 有权限改它的属主（改不了就在 `.env` 里把 `F2A_UID` /
-  `F2A_GID` 填成目录属主）。
+- Docker 报 `启动失败: 连接数据库: unable to open database file (14)`：数据目录写不进去。容器
+  默认以 root 跑，正常情况下不会出现；出现过说明 `.env` 里设了 `F2A_UID` / `F2A_GID`，但数据目录
+  属主不是它（`chown -R <uid>:<gid> <数据目录>`，或者把这两行去掉）。
 - **改了端口却访问不到**：`/etc/forward2any.env` 只是引导值。之前在后台「设置」页改过端口的话，
   以设置页为准 —— 要么去后台改回来，要么直接用数据库里那个端口访问。
 

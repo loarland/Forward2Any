@@ -18,13 +18,9 @@ services:
     volumes:
       - "${F2A_DATA_DIR:-f2a-data}:/data"
 
-    # 容器内进程的身份，默认 65532（镜像里的 nonroot）。数据目录属主由 init-data 对齐，
-    # 所以命名卷和宿主机目录都不需要先 chown。改这里的话 init-data 会跟着改。
-    user: "${F2A_UID:-65532}:${F2A_GID:-65532}"
-
-    depends_on:
-      init-data:
-        condition: service_completed_successfully
+    # 以 root 跑（镜像默认是 nonroot 65532）：宿主机目录不用先 chown，挂哪都写得进去。
+    # 想跑非 root 就在 .env 里设 F2A_UID / F2A_GID，并把数据目录属主改成一致。
+    user: "${F2A_UID:-0}:${F2A_GID:-0}"
 
     environment:
       # 下面这些只在首次启动时写进数据库，之后一律以后台「设置」页的值为准。
@@ -35,17 +31,6 @@ services:
       # 回调 URL 和 curl 示例的基址，必须是外部真正能访问到的地址
       F2A_BASE_URL: "${F2A_BASE_URL:-http://localhost:${F2A_HOST_PORT:-16000}}"
       F2A_LOG_LEVEL: "${F2A_LOG_LEVEL:-info}"
-
-  # 把数据目录的属主改成上面那个 uid。非 root 进程没有 chown 权限，
-  # 而宿主机目录在 Linux 上常常是 root 属主（比如由 Docker 自动创建），
-  # 不改就写不进去。命名卷本身就是 65532 属主，这一步等于空跑。
-  init-data:
-    image: busybox:1.37
-    user: "0:0"
-    command: ["sh", "-c", "chown -R ${F2A_UID:-65532}:${F2A_GID:-65532} /data"]
-    volumes:
-      - "${F2A_DATA_DIR:-f2a-data}:/data"
-    restart: "no"
 
 volumes:
   f2a-data:
