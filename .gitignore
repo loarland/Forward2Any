@@ -17,3 +17,7 @@
 # Python（scripts/ 下的辅助脚本）
 __pycache__/
 *.pyc
+
+# 只在本地留存的设计 / 开发文档：内容细到每一步的取舍和实测数据，不进仓库。
+# 想改内容直接编辑 internal-docs/ 下的文件，git 永远看不到它们。
+/internal-docs/
