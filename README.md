@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="internal/web/ui/static/logo.png" width="140" alt="Forward2Any">
+
 # Forward2Any
 
 接收 Webhook 与邮件，按规则转发到一个或多个 Webhook / 邮箱 / Telegram。

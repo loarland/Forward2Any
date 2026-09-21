@@ -20,6 +20,10 @@
     }
   } catch (e) { /* 无痕模式等拿不到 sessionStorage：那就不还原，页面照常显示 */ }
 })();</script>
+{{/* 图标：浏览器标签页 / 书签 / 加到手机桌面都用同一个标记。
+     32 的给标签页，180 的给 iOS 桌面图标（apple-touch-icon 不接受 SVG）。 */}}
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 <title>{{.Title}} · Forward2Any</title>
 {{/* 样式分四层，顺序不能换：
        pico.min.css           底座 —— 表单/表格/排版的默认样式，也是亮暗两套配色的来源
