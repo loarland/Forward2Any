@@ -73,19 +73,27 @@ class H(http.server.BaseHTTPRequestHandler):
                 if v:
                     f.write(('%s: %s\n' % (k, v)).encode())
             f.write(b'BODY ' + body + b'\n---\n')
-        # 路径里带 /bot 的当成 Telegram Bot API：回它那套信封（成不成看 ok），
-        # 好让端到端真的走一遍「解析响应、判定成功」这段。
-        if '/bot' in self.path:
-            resp = b'{"ok":true,"result":{"message_id":1,"chat":{"id":-1001234567890}}}'
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(resp)))
-            self.end_headers()
-            self.wfile.write(resp)
-            return
+        # 按路径回各家的信封，好让端到端真的走一遍「解析响应、判定成功」这段：
+        #   /bot...        Telegram Bot API（成不成看 ok）
+        #   /dingtalk...   钉钉（HTTP 200 + errcode）
+        #   /dingtalk-bad  钉钉的业务错误码，用来验证「HTTP 200 但被拒绝」要判失败
+        #   /onebot...     OneBot（status + retcode）
+        p = self.path
+        if '/bot' in p:
+            resp, ctype = b'{"ok":true,"result":{"message_id":1,"chat":{"id":-1001234567890}}}', 'application/json'
+        elif p.startswith('/dingtalk-bad'):
+            resp, ctype = b'{"errcode":300001,"errmsg":"msgtype is null"}', 'application/json'
+        elif p.startswith('/dingtalk'):
+            resp, ctype = b'{"errcode":0,"errmsg":"ok"}', 'application/json'
+        elif p.startswith('/onebot'):
+            resp, ctype = b'{"status":"ok","retcode":0,"data":{"message_id":1}}', 'application/json'
+        else:
+            resp, ctype = b'ok', 'text/plain'
         self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(resp)))
         self.end_headers()
-        self.wfile.write(b'ok')
+        self.wfile.write(resp)
 
     def log_message(self, *a):
         pass
@@ -1052,6 +1060,130 @@ pass "改密后旧密码 f2a 失效"
 
 kill "$DP_PID" 2>/dev/null || true
 wait "$DP_PID" 2>/dev/null || true
+
+echo
+echo "== 内置渠道（钉钉 / OneBot）=="
+
+# 渠道的报文格式由程序按类型拼，用户只填地址（+ 加签密钥 / 目标 ID）。
+# 这里真的发一遍，再从 mock 收到的内容里核对报文形状。
+post_form \
+  --data-urlencode "name=钉钉渠道" \
+  --data-urlencode "kind=dingtalk" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/dingtalk?access_token=tok-e2e" \
+  --data-urlencode "channel_secret=e2e-sign-secret" \
+  --data-urlencode "channel_target=" \
+  "$BASE/sources"
+
+post_form \
+  --data-urlencode "name=OneBot 渠道" \
+  --data-urlencode "kind=onebot" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/onebot/send_group_msg" \
+  --data-urlencode "channel_secret=" \
+  --data-urlencode "channel_target=123456" \
+  "$BASE/sources"
+
+# 渠道只能发送：把用途写成接收要被拦下来。
+code=$(curl -s -o "$WORK/ch-recv.out" -w '%{http_code}' -b "$JAR" -c "$JAR" -X POST \
+  --data-urlencode "name=渠道当接收源" \
+  --data-urlencode "kind=dingtalk" \
+  --data-urlencode "usage=in" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/dingtalk" \
+  "$BASE/sources")
+grep -q "只能用作发送源" "$WORK/ch-recv.out" || fail "渠道类型选成接收源应当被拒绝，实际：$(cat "$WORK/ch-recv.out")"
+pass "渠道类型被限制为发送源"
+
+# 从导出文件里按名字取源 id，不依赖自增顺序。
+# 先落盘再解析：管道配 set -o pipefail 时，读一半退出会连累整条命令判失败。
+source_id() {
+  local want="$1" file="$WORK/export.json"
+  curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings/export" > "$file" || return 1
+  python3 - "$file" "$want" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+for src in data["sources"]:
+    if src.get("name") == want:
+        print(src["id"])
+        break
+else:
+    sys.exit("找不到名为 %r 的源（现有：%r）" % (want, [s.get("name") for s in data["sources"]]))
+PY
+}
+DING_ID="$(source_id 钉钉渠道)"
+ONEBOT_ID="$(source_id "OneBot 渠道")"
+# 接收源的 id 也不能写死：前面的「配置导入」把源整体换过一遍，自增 id 早就不是 1 了。
+GH_ID="$(source_id "GitHub 接收")"
+
+post_form \
+  --data-urlencode "name=转发到渠道" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=$GH_ID" \
+  --data-urlencode "to_source_ids=$DING_ID" \
+  --data-urlencode "to_source_ids=$ONEBOT_ID" \
+  --data-urlencode "filters=action eq ping" \
+  --data-urlencode "body_template={{.Payload.action}} 来自 {{.Source.name}}" \
+  --data-urlencode "subject_template=渠道测试" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+rm -f "$RECEIVED"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  -H 'Content-Type: application/json' -H 'X-F2A-Token: e2e-secret' \
+  -d '{"action":"ping"}' "$BASE/hook/gh-e2e")
+[ "$code" = "202" ] || fail "渠道投递的入站请求应返回 202，实际 $code"
+
+wait_for "grep -q 'PATH /onebot/send_group_msg' $RECEIVED" || fail "OneBot 渠道没有收到投递"
+grep -q 'PATH /dingtalk?access_token=tok-e2e&timestamp=' "$RECEIVED" || fail "钉钉渠道没有带上加签参数：$(cat "$RECEIVED")"
+grep -q '&sign=' "$RECEIVED" || fail "钉钉渠道的加签参数里没有 sign"
+grep -q '"msgtype":"markdown"' "$RECEIVED" || fail "钉钉报文缺少 msgtype：$(cat "$RECEIVED")"
+grep -q '"text":"ping 来自 GitHub 接收"' "$RECEIVED" || fail "钉钉报文里的正文不对（模板应当渲染成消息正文）：$(cat "$RECEIVED")"
+grep -q '"group_id":123456' "$RECEIVED" || fail "OneBot 报文里的 group_id 不对：$(cat "$RECEIVED")"
+grep -q '"title":"渠道测试"' "$RECEIVED" || fail "渠道报文的标题应当来自邮件主题模板：$(cat "$RECEIVED")"
+pass "钉钉 / OneBot 的报文按各自格式拼好并发出（含加签与目标 ID）"
+
+# 业务错误码必须判失败：HTTP 200 + errcode 300001 不能记成成功。
+post_form \
+  --data-urlencode "name=钉钉坏地址" \
+  --data-urlencode "kind=dingtalk" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/dingtalk-bad" \
+  --data-urlencode "channel_secret=" \
+  --data-urlencode "channel_target=" \
+  "$BASE/sources"
+BAD_ID="$(source_id 钉钉坏地址)"
+
+post_form \
+  --data-urlencode "name=转发到坏渠道" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=$GH_ID" \
+  --data-urlencode "to_source_ids=$BAD_ID" \
+  --data-urlencode "filters=action eq pong" \
+  --data-urlencode "body_template=" \
+  --data-urlencode "subject_template=" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+  -H 'X-F2A-Token: e2e-secret' -d '{"action":"pong"}' "$BASE/hook/gh-e2e"
+
+# 列表页只显示响应码（这里是 200），失败原因在详情页里，所以要顺着链接进去看。
+dl_detail() {
+  local url
+  url="$(curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=钉钉坏地址" "$BASE/deliveries" \
+    | grep -o '/deliveries/[0-9]*' | head -1)"
+  [ -n "$url" ] || return 1
+  curl -fsS -b "$JAR" "$BASE$url"
+}
+wait_for "dl_detail | grep -q 300001" \
+  || fail "HTTP 200 + errcode 300001 必须判失败，并把对方的错误码写进记录"
+dl_detail | grep -q "被拒绝" || fail "投递记录里应当写清楚是被渠道拒绝的"
+pass "渠道的业务错误码被认出来（HTTP 200 也判失败），记录里能看到对方的原因"
 
 echo
 echo "== 端口热切换 =="

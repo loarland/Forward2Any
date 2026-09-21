@@ -191,7 +191,12 @@ func (s *Server) handleSourceTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 测试消息也分两种：自定义 Webhook 发的是那串 JSON，内置渠道发的是给人看的一句话
+	// （渠道会把正文包进自己的信封里，塞一坨 JSON 进去只会收到一条看不懂的通知）。
 	body := `{"test":true,"from":"Forward2Any","message":"这是一条测试消息"}`
+	if store.IsChannelKind(src.Kind) {
+		body = "这是一条来自 Forward2Any 的测试消息。\n\n如果你在群里看到了它，说明这个渠道配置是对的。"
+	}
 	if err := s.engine.PostTest(src, body); err != nil {
 		s.fail(w, "入队测试消息失败", err)
 		return
@@ -216,10 +221,11 @@ func (s *Server) sourceFromForm(r *http.Request, base *store.Source) (*store.Sou
 	v.AuthSecret = formValue(r, "auth_secret")
 	v.IPAllow = formValue(r, "ip_allow")
 
-	// 「走代理发送」只在 webhook / Telegram 且用途包含发送时才认（表单上也只有那时才显示）。
+	// 「走代理发送」只在能发送的非邮件类型上认（表单上也只有那时才显示）：
+	// Webhook、Telegram 和内置渠道都走 HTTP，邮件走 SMTP，代理对它没意义。
 	// 其它情况一律沿用原值：用途改成纯接收不该把这个勾悄悄清掉，
 	// 改回发送时它还在这儿。
-	if (v.Kind == "webhook" || v.Kind == "telegram") && v.CanSend() {
+	if v.Kind != "email" && v.CanSend() {
 		v.UseProxy = formBool(r, "use_proxy")
 	} else {
 		v.UseProxy = base.UseProxy
@@ -229,6 +235,9 @@ func (s *Server) sourceFromForm(r *http.Request, base *store.Source) (*store.Sou
 	v.TgChatID = formValue(r, "tg_chat_id")
 	v.TgThreadID = formValue(r, "tg_thread_id")
 	v.TgEndpoint = formValue(r, "tg_endpoint")
+
+	v.ChannelSecret = formValue(r, "channel_secret")
+	v.ChannelTarget = formValue(r, "channel_target")
 
 	v.SMTPHost = formValue(r, "smtp_host")
 	v.SMTPPort = formInt(r, "smtp_port", 587)
@@ -265,13 +274,22 @@ func (s *Server) validateSource(v *store.Source) error {
 	return nil
 }
 
+// kindListText 是错误信息里那个「类型只能是 …」的列表。
+func kindListText() string {
+	names := make([]string, 0, len(store.AllKinds))
+	for _, k := range store.AllKinds {
+		names = append(names, store.KindLabel(k))
+	}
+	return strings.Join(names, "、")
+}
+
 // validateSourceShape 只校验内容本身，不查库 —— 导入时库里还是空的，没法比对。
 func validateSourceShape(v *store.Source) error {
 	if v.Name == "" {
 		return errors.New("名称不能为空")
 	}
-	if v.Kind != "webhook" && v.Kind != "email" && v.Kind != "telegram" {
-		return errors.New("类型只能是 Webhook、邮件或 Telegram")
+	if v.Kind != "webhook" && v.Kind != "email" && !store.IsSendOnlyKind(v.Kind) {
+		return fmt.Errorf("类型只能是 %s", kindListText())
 	}
 	if v.Usage != "in" && v.Usage != "out" && v.Usage != "both" {
 		return errors.New("用途不合法")
@@ -346,6 +364,35 @@ func validateSourceShape(v *store.Source) error {
 		if v.TgThreadID != "" {
 			if _, err := strconv.ParseInt(v.TgThreadID, 10, 64); err != nil {
 				return fmt.Errorf("话题 ID %q 不是数字", v.TgThreadID)
+			}
+		}
+	}
+
+	// 内置渠道：地址是唯一的必填项（凭据就藏在里面），个别渠道还要目标 ID。
+	// 报文格式由程序按类型拼，用户不用管 —— 规则里的模板这时是「消息正文」。
+	if store.IsChannelKind(v.Kind) {
+		label := store.KindLabel(v.Kind)
+		if v.Usage != "out" {
+			return fmt.Errorf("「%s」类型只能用作发送源，用途请选「发送」", label)
+		}
+		v.URL = strings.TrimSpace(v.URL)
+		if v.URL == "" {
+			return fmt.Errorf("必须填写「%s」的推送地址", label)
+		}
+		u, err := url.Parse(v.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("推送地址 %q 不合法，要写成完整的 http(s) 地址", v.URL)
+		}
+		switch v.Kind {
+		case "onebot":
+			if strings.TrimSpace(v.ChannelTarget) == "" {
+				return errors.New("OneBot 要填目标 ID：私聊写 QQ 号，群聊写群号")
+			}
+		case "wxpusher":
+			// 极简推送的地址里带着 SPT，投递时要把它抽出来重新打到 simple-push 接口上。
+			if !strings.Contains(v.URL, "/message/SPT_") {
+				return errors.New("WxPusher 要填带 SPT 的推送地址，形如 " +
+					"https://wxpusher.zjiecode.com/api/send/message/SPT_xxxxxx")
 			}
 		}
 	}

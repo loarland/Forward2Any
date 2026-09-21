@@ -1580,8 +1580,8 @@ func TestSourceFormTelegramFieldsAndSingleProxySwitch(t *testing.T) {
 	if n := strings.Count(body, `id="use_proxy"`); n != 1 {
 		t.Errorf("use_proxy 的 id 应当只有一个（重复会让 label 点到另一个上），实际 %d 个", n)
 	}
-	if !strings.Contains(body, `data-when="webhook,telegram:send"`) {
-		t.Error("代理开关所在的块应当对 Webhook 和 Telegram 都显示")
+	if !strings.Contains(body, `data-when="webhook,telegram,dingtalk,wecom,feishu,bark,serverchan,wxpusher,gotify,onebot:send"`) {
+		t.Error("代理开关所在的块应当对 Webhook、Telegram 和所有内置渠道都显示")
 	}
 }
 
@@ -1899,5 +1899,168 @@ func TestFilterBarGeometryIsStable(t *testing.T) {
 	}
 	if !strings.Contains(string(js), "if (e.defaultPrevented)") {
 		t.Error("没跳过被拦下的提交：那种提交页面还在原地，记下的位置会坑到下一次")
+	}
+}
+
+// 内置渠道的校验：只能发送、地址必填且要像样，WxPusher 要带 SPT，OneBot 要目标 ID。
+func TestChannelSourceValidation(t *testing.T) {
+	s := testServer()
+	cases := []struct {
+		name    string
+		kind    string
+		usage   string
+		url     string
+		target  string
+		wantErr string // 空表示应当通过
+	}{
+		{"钉钉正常", "dingtalk", "out", "https://oapi.dingtalk.com/robot/send?access_token=t", "", ""},
+		{"企业微信正常", "wecom", "out", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k", "", ""},
+		{"飞书正常", "feishu", "out", "https://open.feishu.cn/open-apis/bot/v2/hook/h", "", ""},
+		{"Bark 正常", "bark", "out", "https://api.day.app/key", "监控", ""},
+		{"Server酱正常", "serverchan", "out", "https://sctapi.ftqq.com/SCTkey.send", "", ""},
+		{"WxPusher 正常", "wxpusher", "out", "https://wxpusher.zjiecode.com/api/send/message/SPT_x", "", ""},
+		{"Gotify 正常", "gotify", "out", "https://gotify.example.com/message?token=t", "", ""},
+		{"OneBot 正常", "onebot", "out", "http://127.0.0.1:3000/send_group_msg", "123", ""},
+		{"渠道不能接收", "dingtalk", "in", "https://oapi.dingtalk.com/robot/send?access_token=t", "", "只能用作发送源"},
+		{"渠道不能收发都占", "feishu", "both", "https://open.feishu.cn/open-apis/bot/v2/hook/h", "", "只能用作发送源"},
+		{"没填地址", "gotify", "out", "", "", "必须填写「Gotify」的推送地址"},
+		{"地址不是 http", "bark", "out", "api.day.app/key", "", "不合法"},
+		{"WxPusher 没带 SPT", "wxpusher", "out", "https://wxpusher.zjiecode.com/api/send/message", "", "SPT"},
+		{"OneBot 没填目标", "onebot", "out", "http://127.0.0.1:3000/send_group_msg", "", "目标 ID"},
+	}
+	for _, tc := range cases {
+		form := url.Values{
+			"name": {"渠道"}, "kind": {tc.kind}, "usage": {tc.usage}, "enabled": {"1"},
+			"url": {tc.url}, "channel_secret": {""}, "channel_target": {tc.target},
+		}
+		r := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		_, err := s.sourceFromForm(r, &store.Source{})
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s：不该报错，实际 %v", tc.name, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s：应当报错（含 %q）", tc.name, tc.wantErr)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s：报错应含 %q，实际 %q", tc.name, tc.wantErr, err.Error())
+		}
+	}
+}
+
+// 渠道的加签密钥 / 目标 ID 要存得下、回填得出来（改别的字段时别把它们弄丢）。
+func TestChannelFieldsRoundTrip(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+
+	form := url.Values{
+		"name": {"钉钉"}, "kind": {"dingtalk"}, "usage": {"out"}, "enabled": {"1"},
+		"url":            {"https://oapi.dingtalk.com/robot/send?access_token=t"},
+		"channel_secret": {"SECabc"}, "channel_target": {""},
+	}
+	r := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	src, err := s.sourceFromForm(r, &store.Source{})
+	if err != nil {
+		t.Fatalf("渠道源应当解析成功: %v", err)
+	}
+	if src.ChannelSecret != "SECabc" {
+		t.Fatalf("加签密钥没存下来: %+v", src)
+	}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	// 回填：编辑页里要有这两个输入框和存进去的值
+	rec := httptest.NewRecorder()
+	s.renderSourceForm(rec, httptest.NewRequest("GET", "/sources/1/edit", nil), src, "")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`name="channel_secret"`, `value="SECabc"`,
+		`name="channel_target"`,
+		`data-when="dingtalk,feishu:send"`,
+		`data-when="onebot,bark:send"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("渠道源的编辑页里缺少 %s", want)
+		}
+	}
+}
+
+// 源表单要能选到所有内置渠道，并且每个渠道的说明块都在（data-when 指到了它）。
+func TestSourceFormListsChannelKinds(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+	rec := httptest.NewRecorder()
+	s.renderSourceForm(rec, httptest.NewRequest("GET", "/sources/new", nil), &store.Source{Enabled: true}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("源表单渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, kind := range store.ChannelKinds {
+		if !strings.Contains(body, `value="`+kind+`"`) {
+			t.Errorf("类型下拉里没有 %s", kind)
+		}
+		if !strings.Contains(body, `data-when="`+kind+`:send"`) {
+			t.Errorf("缺少 %s 的说明块", kind)
+		}
+	}
+	if !strings.Contains(body, `data-when="dingtalk,wecom,feishu,bark,serverchan,wxpusher,gotify,onebot:recv"`) {
+		t.Error("渠道类型选成接收时应当有一段说明")
+	}
+	// 地址只有一个输入框：每个渠道各放一个同名字段的话，隐藏的那些会先被读到，填的地址就丢了
+	if n := strings.Count(body, `name="url"`); n != 1 {
+		t.Errorf("推送地址应当只有一个输入框，实际 %d 个", n)
+	}
+	if n := strings.Count(body, `name="channel_target"`); n != 1 {
+		t.Errorf("目标 ID / 分组名应当只有一个输入框，实际 %d 个", n)
+	}
+}
+
+// 源列表的类型筛选要能筛到新渠道。
+func TestSourcesListFilterHasChannelKinds(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+	if err := st.SaveSource(&store.Source{
+		Name: "钉钉", Kind: "dingtalk", Usage: "out", Enabled: true, Headers: "{}",
+		URL: "https://oapi.dingtalk.com/robot/send?access_token=t",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleSourceList(rec, httptest.NewRequest("GET", "/sources", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `<option value="dingtalk">钉钉</option>`) {
+		t.Error("类型筛选里没有钉钉")
+	}
+	if !strings.Contains(body, `data-kind="dingtalk"`) {
+		t.Error("渠道源的卡片上没有 data-kind，前端筛选会漏掉它")
+	}
+	if !strings.Contains(body, "钉钉") {
+		t.Error("渠道源的卡片上应当显示类型名")
 	}
 }

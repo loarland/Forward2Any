@@ -12,9 +12,9 @@
     <label><span>名称</span><input type="text" name="name" value="{{.Src.Name}}" required></label>
     <label><span>类型</span>
       <select name="kind">
-        <option value="webhook" {{if eq .Src.Kind "webhook"}}selected{{end}}>Webhook</option>
-        <option value="email" {{if eq .Src.Kind "email"}}selected{{end}}>邮件</option>
-        <option value="telegram" {{if eq .Src.Kind "telegram"}}selected{{end}}>Telegram</option>
+        {{range kindOptions}}
+        <option value="{{.}}" {{if eq $.Src.Kind .}}selected{{end}}>{{kindText .}}</option>
+        {{end}}
       </select>
     </label>
     <label><span>用途</span>
@@ -107,10 +107,113 @@
   </div>
 </div>
 
-<!-- ---------- webhook 发送 ---------- -->
+<!-- ---------- 推送地址（自定义 Webhook 与所有内置渠道共用这一格） ---------- -->
+{{/* 地址只有一格，不给每个渠道各放一个同名的输入框：隐藏起来的面板照样会把值提交上来，
+     同一个 name 出现两次时服务端只会读第一个，等于把用户填的地址丢了。 */}}
+<div class="panel" data-when="{{urlKinds}}:send">
+  <h2>推送地址</h2>
+  <label>
+    <span>地址 <span class="hint">渠道的 Webhook / 推送地址，凭据通常就在里面</span></span>
+    <input type="text" name="url" value="{{.Src.URL}}" placeholder="https://example.com/incoming">
+  </label>
+
+  <div class="note" data-when="webhook:send">
+    <strong>自定义 Webhook</strong>：目标地址原样收下报文。请求方法、固定请求头见下面一块；
+    报文内容由规则的「报文体模板」决定，模板留空就是原样透传入站报文。
+    想让别的服务认得出这条消息，就按它的文档在规则里写模板。
+  </div>
+
+  <div class="note" data-when="dingtalk:send">
+    <strong>钉钉群机器人</strong>：群设置 → 智能群助手 → 添加机器人 → 自定义 → 复制 Webhook，
+    形如 <span class="mono">https://oapi.dingtalk.com/robot/send?access_token=…</span>。<br>
+    安全设置选「自定义关键词」时，消息里必须带上那个关键词；选「加签」时把密钥填到下面的加签密钥里。
+    机器人限速 20 条/分钟，超了会被临时限流。
+  </div>
+
+  <div class="note" data-when="wecom:send">
+    <strong>企业微信群机器人</strong>：群设置 → 群机器人 → 添加 → 复制 Webhook，
+    形如 <span class="mono">https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…</span>。<br>
+    正文按 markdown 发出（企业微信只支持它的一个子集），单条上限 4096 字节。
+  </div>
+
+  <div class="note" data-when="feishu:send">
+    <strong>飞书群机器人</strong>：群设置 → 群机器人 → 添加 → 自定义机器人 → 复制 Webhook，
+    形如 <span class="mono">https://open.feishu.cn/open-apis/bot/v2/hook/…</span>。<br>
+    正文发的是互动卡片（标题 + markdown 正文）。如果安全设置开了「签名校验」，
+    把签名密钥填到下面的加签密钥里，不然会被拒。
+  </div>
+
+  <div class="note" data-when="bark:send">
+    <strong>Bark</strong>：填 Bark App 里那条推送地址，
+    形如 <span class="mono">https://api.day.app/&lt;你的 key&gt;</span>（自建的换成自己的域名）。<br>
+    正文按 markdown 发出；想给它归个组就在下面填分组名，不填就不分组。
+  </div>
+
+  <div class="note" data-when="serverchan:send">
+    <strong>Server酱</strong>：在 <span class="mono">sct.ftqq.com</span> 拿到 SendKey 后，
+    地址形如 <span class="mono">https://sctapi.ftqq.com/&lt;SendKey&gt;.send</span>。<br>
+    标题来自规则的「邮件主题模板」（留空会用默认标题），正文是渲染后的报文。
+  </div>
+
+  <div class="note" data-when="wxpusher:send">
+    <strong>WxPusher</strong>：用它的「极简推送」——扫码后复制那条带
+    <span class="mono">SPT_</span> 的地址，形如
+    <span class="mono">https://wxpusher.zjiecode.com/api/send/message/SPT_xxxxxx</span>。<br>
+    程序会把 SPT 抽出来打到 <span class="mono">simple-push</span> 接口上，正文按 markdown 发送。
+  </div>
+
+  <div class="note" data-when="gotify:send">
+    <strong>Gotify</strong>：在 Gotify 里建一个应用，地址形如
+    <span class="mono">https://gotify.example.com/message?token=&lt;应用令牌&gt;</span>（末尾的
+    <span class="mono">/message</span> 别丢）。<br>
+    标题来自「邮件主题模板」，正文按 markdown 发送，优先级固定 5。
+  </div>
+
+  <div class="note" data-when="onebot:send">
+    <strong>OneBot（QQ 等）</strong>：填实现（go-cqhttp / NapCat / Lagrange 之类）的 HTTP 接口地址，
+    私聊用 <span class="mono">/send_private_msg</span>、群聊用
+    <span class="mono">/send_group_msg</span>，必要时把 <span class="mono">?access_token=…</span>
+    一起带上。<br>
+    目标 ID 填在下面的「目标 ID」里（私聊写 QQ 号，群聊写群号；写成
+    <span class="mono">user:123</span> / <span class="mono">group:123</span> 更明确）。<br>
+    消息按纯文本发出，<span class="mono">标题 + 换行 + 正文</span>。
+  </div>
+</div>
+
+<!-- ---------- 内置渠道的参数 ---------- -->
+<div class="panel" data-when="{{channelKinds}}:send">
+  <h2>渠道参数</h2>
+  <label data-when="dingtalk,feishu:send">
+    <span>加签密钥 <span class="hint">可选；机器人开了「加签 / 签名校验」时必填</span></span>
+    <input type="password" name="channel_secret" value="{{.Src.ChannelSecret}}" autocomplete="new-password">
+  </label>
+  <label data-when="onebot,bark:send">
+    <span>目标 ID / 分组名
+      <span class="hint">OneBot 必填：私聊写 QQ 号，群聊写群号（也可写 user:123 / group:123）；Bark 选填，填了就当成 App 里的分组名</span>
+    </span>
+    <input type="text" name="channel_target" value="{{.Src.ChannelTarget}}" placeholder="OneBot：123456789；Bark：留空表示不分组">
+  </label>
+  <div class="note">
+    内置渠道的<strong>报文格式由程序按类型拼</strong>（钉钉 / 企业微信 / 飞书 / Bark / Server酱 /
+    WxPusher / Gotify / OneBot 各不一样），不用自己写 JSON。<br>
+    规则里的「报文体模板」这时表示<strong>消息正文</strong>（留空则原样透传入站报文），
+    「邮件主题模板」表示<strong>标题</strong>（留空会自动生成一个）。
+  </div>
+</div>
+
+<!-- ---------- 内置渠道只能发送 ---------- -->
+{{/* 和 Telegram 一样：选了渠道但用途还停在接收时，说清楚该改哪一格。 */}}
+<div class="panel" data-when="{{channelKinds}}:recv">
+  <div class="note">
+    内置渠道<strong>只能当发送源</strong>：「用途」请选<strong>发送</strong>。
+    选「接收」或「接收 + 发送」都会被拒绝 —— 这些接口只有发送这一个方向。
+    想让别的服务把消息推给 Forward2Any，用 Webhook 或邮件类型。
+  </div>
+</div>
+
+<!-- ---------- 自定义 Webhook 发送 ---------- -->
 <div class="panel" data-when="webhook:send">
-  <h2>Webhook 发送</h2>
-  <label><span>目标地址</span><input type="text" name="url" value="{{.Src.URL}}" placeholder="https://example.com/incoming"></label>
+  <h2>自定义 Webhook 发送</h2>
   <div class="grid2">
     <label><span>请求方法</span>
       <select name="http_method">
@@ -178,7 +281,7 @@
 <!-- ---------- 发送代理 ---------- -->
 {{/* 代理对 Webhook 和 Telegram 是同一件事，所以只留一个勾选框：
      两个面板各放一个的话，同一个 name 会提交两次、id 也会重复（label 会点到另一个上）。 */}}
-<div class="panel" data-when="webhook,telegram:send">
+<div class="panel" data-when="{{proxyKinds}}:send">
   <h2>发送代理</h2>
   {{/* 没配代理时把勾选框禁用掉：勾了也不会生效，不如直接说清楚。 */}}
   <div class="checkbox-line">
@@ -195,7 +298,7 @@
     没配代理时勾了也不生效，投递仍然直连。
     {{end}}
     <br>
-    代理只作用于 Webhook 和 Telegram 发送，邮件发送（SMTP）不受影响。
+    代理只作用于 Webhook、Telegram 和内置渠道的发送，邮件发送（SMTP）不受影响。
     用途改成不含发送之后，这个勾会被忽略，改回发送时按原样生效。
   </div>
 </div>

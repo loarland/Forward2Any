@@ -359,6 +359,15 @@ func (e *Engine) attempt(d *store.Delivery) {
 	case "email":
 		sendErr = e.sendMail(d, out)
 	default:
+		if store.IsChannelKind(out.Kind) {
+			client, cerr := e.httpClientFor(out, settings)
+			if cerr != nil {
+				sendErr = cerr
+				break
+			}
+			code, respBody, sendErr = e.sendChannel(d, out, client)
+			break
+		}
 		sendErr = fmt.Errorf("未知的源类型 %q", out.Kind)
 	}
 

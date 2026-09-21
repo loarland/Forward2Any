@@ -119,6 +119,13 @@ var migrations = [][]string{
 		`ALTER TABLE sources ADD COLUMN tg_thread_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sources ADD COLUMN tg_endpoint TEXT NOT NULL DEFAULT ''`,
 	},
+	// v4：内置渠道发送源（钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot）。
+	// 渠道的 Webhook 地址复用 url 列；这里只多两列：
+	// 加签密钥（钉钉、飞书用得上）和目标 ID（OneBot 的 QQ 号 / 群号）。
+	{
+		`ALTER TABLE sources ADD COLUMN channel_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sources ADD COLUMN channel_target TEXT NOT NULL DEFAULT ''`,
+	},
 }
 
 // DBPath 是数据目录里那个库文件的路径。

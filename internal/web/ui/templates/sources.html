@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>源</h1>
-    <div class="sub">接收来源与转发目标，支持 Webhook、邮件与 Telegram 三种类型</div>
+    <div class="sub">接收来源与转发目标：Webhook、邮件、Telegram，以及钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot 这些内置渠道</div>
   </div>
   <a class="btn primary" href="/sources/new">新建源</a>
 </div>
@@ -18,9 +18,9 @@
   <label class="lf-field"><span>类型</span>
     <select data-lf="kind">
       <option value="">全部</option>
-      <option value="webhook">Webhook</option>
-      <option value="email">邮件</option>
-      <option value="telegram">Telegram</option>
+      {{range kindOptions}}
+      <option value="{{.}}">{{kindText .}}</option>
+      {{end}}
     </select>
   </label>
   <label class="lf-field"><span>用途</span>

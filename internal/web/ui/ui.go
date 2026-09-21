@@ -11,6 +11,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 //go:embed templates/*.html
@@ -54,6 +56,21 @@ var funcs = template.FuncMap{
 	"statusText": statusText,
 	"kindText":   kindText,
 	"usageText":  usageText,
+	// 类型下拉、列表筛选都用这一份，省得界面上漏掉新加的类型。
+	"kindOptions": func() []string { return store.AllKinds },
+	// 内置渠道的 kind 列表（逗号分隔），表单里按它决定显示哪一组字段。
+	"channelKinds": func() string { return strings.Join(store.ChannelKinds, ",") },
+	// 需要填「推送地址」的类型：自定义 Webhook 与所有内置渠道。
+	// Telegram 不在里面 —— 它的地址是拼出来的，表单上只填 token。
+	"urlKinds": func() string {
+		return strings.Join(append([]string{"webhook"}, store.ChannelKinds...), ",")
+	},
+	// 「发送代理」那一块是 Webhook / Telegram / 内置渠道共用的：
+	// data-when 里要列全，不然新渠道的源表单上不会出现这个勾选框。
+	"proxyKinds": func() string {
+		kinds := append([]string{"webhook", "telegram"}, store.ChannelKinds...)
+		return strings.Join(kinds, ",")
+	},
 }
 
 func statusText(s string) string {
@@ -72,17 +89,7 @@ func statusText(s string) string {
 	return s
 }
 
-func kindText(k string) string {
-	switch k {
-	case "webhook":
-		return "Webhook"
-	case "email":
-		return "邮件"
-	case "telegram":
-		return "Telegram"
-	}
-	return k
-}
+func kindText(k string) string { return store.KindLabel(k) }
 
 func usageText(u string) string {
 	switch u {

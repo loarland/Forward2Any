@@ -59,7 +59,7 @@ Webhook、邮箱或 Telegram。
 | 模块 | 能力 |
 | --- | --- |
 | 接收 | Webhook（路径标识 + 密钥 / HMAC-SHA256 签名 / HTTP Basic / IP 白名单）、IMAP 轮询收信 |
-| 发送 | Webhook（自定义方法、请求头、报文模板）、SMTP 邮件、Telegram Bot API |
+| 发送 | Webhook（自定义方法、请求头、报文模板）、SMTP 邮件、Telegram Bot API、内置渠道（钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot） |
 | 规则 | 多接收源 → 多目标源、过滤条件、模板转换、循环检测 |
 | 过滤 | `eq` `ne` `gt` `lt` `contains` `not_contains` `exists` `not_exists` `regex` `in`，可视化编辑或文本模式 |
 | 模板 | Go template 语法，可改写报文体、邮件主题、请求头；保存前校验语法 |
@@ -67,7 +67,7 @@ Webhook、邮箱或 Telegram。
 | 代理 | HTTP / HTTPS / SOCKS5，全局配置 + 每个源单独勾选 |
 | 外观 | 20 种配色 × 亮色 / 深色 / 跟随系统，改完立刻预览 |
 | 运维 | 配置导入导出、日志保留期、监听端口热切换、容器健康检查 |
-| 安全 | bcrypt 密码、HttpOnly 会话、写操作校验来源、登录失败锁定、Bot Token 脱敏、数据库 0600 |
+| 安全 | bcrypt 密码、HttpOnly 会话、写操作校验来源、登录失败锁定、Bot Token 与渠道凭据脱敏、数据库 0600 |
 
 ## 系统架构
 
@@ -78,6 +78,7 @@ flowchart LR
   F2A["Forward2Any<br/>单容器 / 单端口"] -->|"规则匹配 → 过滤 → 模板渲染"| Hook["Webhook 目标"]
   F2A --> SMTP["邮件 / SMTP"]
   F2A --> TG["Telegram Bot API"]
+  F2A --> CH["钉钉 / 企业微信 / 飞书 / Bark<br/>Server酱 / WxPusher / Gotify / OneBot"]
   F2A <--> DB[("SQLite<br/>源 / 规则 / 投递日志")]
 ```
 
@@ -371,6 +372,8 @@ Webhook ──┐                    ┌──> Webhook A
 ### Webhook 发送
 
 填目标地址、请求方法，以及可选的固定请求头（JSON 对象）。规则里配置了请求头模板时，以模板为准。
+**报文原样透传**（或按规则模板渲染），所以对方要什么格式得自己写 —— 钉钉、飞书这类有固定报文
+要求的服务请改用下面的[内置渠道](#内置渠道发送)。
 
 ### 邮件接收（IMAP 轮询）
 
@@ -430,6 +433,45 @@ curl -X POST 'https://api.telegram.org/bot<token>/sendMessage' \
   失败时把 `description` 记进日志（比如 `chat not found`）。
 - **Bot Token 不会进投递日志**：它在 URL 路径里，所以落库前会把 token 抹成 `***`。
 - `api.telegram.org` 在不少网络里直连不到，可以配合[网络代理](#网络代理)使用。
+
+### 内置渠道发送
+
+钉钉、企业微信、飞书、Bark、Server酱、WxPusher、Gotify、OneBot 这八种。
+
+这些服务都提供「webhook 地址」，但**报文格式没有一个是相同的**，出错也多半是 HTTP 200 +
+报文体里的错误码。所以它们做成了独立的源类型：选好类型、填上地址（个别再填加签密钥或目标 ID），
+报文由程序按各家的格式拼，返回里的业务错误码也会被认出来。
+
+| 类型 | 推送地址 | 额外字段 | 报文 |
+| --- | --- | --- | --- |
+| 钉钉 | 群机器人 Webhook（`oapi.dingtalk.com/robot/send?access_token=…`） | 加签密钥（开了加签才填） | markdown（标题 + 正文） |
+| 企业微信 | 群机器人 Webhook（`qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…`） | — | markdown，单条上限 4096 字节 |
+| 飞书 | 自定义机器人 Webhook（`open.feishu.cn/open-apis/bot/v2/hook/…`） | 签名密钥（开了签名校验才填） | 互动卡片（标题 + markdown） |
+| Bark | `https://api.day.app/<key>`（自建就换域名） | 分组名（可选） | 标题 + markdown |
+| Server酱 | `https://sctapi.ftqq.com/<SendKey>.send` | — | 标题 + 正文 |
+| WxPusher | 带 `SPT_` 的极简推送地址 | — | 正文 + 标题 |
+| Gotify | `https://<域名>/message?token=<应用令牌>` | — | 标题 + markdown，优先级 5 |
+| OneBot | 实现的 HTTP 接口（`/send_private_msg` 或 `/send_group_msg`） | 目标 ID（QQ 号或群号） | 纯文本：标题 + 换行 + 正文 |
+
+规则里的两个模板在这类源上换了含义：**报文体模板 = 消息正文**（留空就原样透传入站报文），
+**邮件主题模板 = 标题**（留空自动生成一个，形如 `[接收源名] 报文首行`）。
+
+几点需要知道的：
+
+- **内置渠道只能当发送源**，用途选「接收」或「接收 + 发送」都会被拒绝。
+- **成不成看报文里的错误码**：钉钉 / 企业微信看 `errcode`，飞书看 `code`，Bark 看 `code == 200`，
+  Server酱看 `code`，WxPusher 看 `code == 1000`，Gotify 看有没有 `error`，OneBot 看 `status`/`retcode`。
+  只有 HTTP 2xx 而报文里是错误码时，投递记录会记成**失败**，失败原因写在详情页里。
+- **钉钉加签**：机器人安全设置选「加签」时，把 `SEC…` 密钥填进「加签密钥」；程序会按
+  `timestamp` + `HMAC-SHA256` 算出 `sign` 拼到地址上。选「自定义关键词」时不用填密钥，
+  但要保证消息里带上那个关键词。钉钉机器人限速 20 条/分钟。
+- **飞书签名**：机器人开了「签名校验」时必须填签名密钥，否则会被拒（`code 19021`）。
+- **WxPusher** 用的是[极简推送](https://wxpusher.zjiecode.com/docs/)的 SPT，扫码就能拿到，
+  比建应用 + 拿 UID 简单；地址里必须带 `SPT_`。
+- **OneBot** 的目标 ID 可以写成 `group:123` / `user:123`；只写数字时按地址里的
+  `send_group_msg` / `send_private_msg` 判断，判断不出来会直接报错，不会猜着发。
+- 想发的内容需要自定义请求方法、请求头或报文格式时，用 **Webhook 类型**（见上一节），
+  报文模板写什么就发什么。
 
 ## 规则
 
@@ -499,6 +541,10 @@ JSON 字符串。
 
 三类模板：**报文体**（对所有目标生效）、**邮件主题**（只对邮件目标生效，留空则自动生成）、
 **请求头**（JSON 对象，值同样支持模板）。
+
+目标里有内置渠道（钉钉 / 企业微信 / 飞书 …）时，这两个模板的含义会变：**报文体 = 那条消息的正文**，
+**邮件主题 = 标题**，外面的信封由程序按各家格式拼。要和自定义 Webhook 目标发不一样的内容，
+把规则拆成两条。
 
 例：把 GitHub push 压成一条消息
 
@@ -670,9 +716,10 @@ sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
 - `/hook/...` 接收端点不走会话鉴权（否则发送方没法调），由源自己的密钥 / 签名 / IP 白名单保护；
   未知路径一律 404，不区分「不存在」和「已停用」。
 - HMAC 与密钥比对用常量时间比较；入站报文内存读取上限 10MB。
-- **数据库文件权限 0600** —— 里面存着 Webhook 密钥、邮箱密码和 Telegram Bot Token。
+- **数据库文件权限 0600** —— 里面存着 Webhook 密钥、邮箱密码、Telegram Bot Token 和渠道地址里的凭据。
 - 基础镜像是 distroless（无 shell、无包管理器）；一键脚本 / 手动装二进制的以专用用户 `f2a` 运行。
-- **Telegram Bot Token 不会出现在投递日志里**（落库前抹成 `***`）。
+- **Token 与渠道凭据不会出现在投递日志里**：Telegram 的 Bot Token、渠道地址里的
+  `access_token` / `key` / SPT、加签密钥，落库前都会抹成 `***`（只留主机名，方便排查）。
 
 需要自己注意的：
 
@@ -801,6 +848,22 @@ F2A_HOST_PORT=9000 docker compose up -d
 Chat ID 不对，或者 bot 不在那个群/频道里。群和频道的 id 是负数，频道也可以填 `@频道用户名`；
 频道要先把 bot 设为管理员。
 
+### 钉钉报 `msgtype is null` / 企业微信、飞书报各种 code
+
+用 **Webhook 类型**把地址填成了钉钉机器人的地址。Webhook 是原样透传（或按模板渲染），
+发出去的是入站报文本身，而钉钉要的是 `{"msgtype":"markdown","markdown":{…}}` 这种信封，
+所以它回 `errcode 300001 msgtype is null`。<br>
+把源的类型改成**钉钉**（企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot 同理），
+地址不用动，程序会按各家格式重拼报文。
+
+### 渠道投递显示失败，但响应码是 200
+
+这是正常的：钉钉、企业微信、飞书、Server酱、WxPusher、Bark、OneBot 都是 **HTTP 200 +
+报文体里的错误码**表达失败。程序会解析报文体，只有业务码也是成功时才记成功，失败原因写在
+投递详情页的「目标响应」和错误提示里，例如 `被拒绝（errcode 300001）：msgtype is null`。<br>
+常见原因：钉钉的关键词安全设置没带上关键词、开了加签但没填加签密钥、飞书开了签名校验、
+WxPusher 的 SPT 失效、OneBot 的 access_token 不对或目标 ID 写错。
+
 ### 正文超过 4096 字符
 
 Telegram 单条消息的上限是 4096 个字符，超了直接判失败、不截断。在规则模板里先截断，或者改用
@@ -885,7 +948,7 @@ journalctl -u forward2any -n 50 --no-pager
 cmd/f2a/               入口（含容器健康检查子命令）
 internal/config/       环境变量与首启动引导
 internal/store/        SQLite：建表、迁移、CRUD、配置导入导出
-internal/engine/       转发引擎：过滤器、模板渲染、出站 Webhook / SMTP / Telegram、重试 worker
+internal/engine/       转发引擎：过滤器、模板渲染、出站 Webhook / SMTP / Telegram / 内置渠道、重试 worker
 internal/mailin/       IMAP 轮询收信
 internal/web/          HTTP 层：后台、登录、接收端点、监听端口生命周期
 internal/web/ui/       内嵌的模板与静态资源（htmx、CSS）—— 没有 npm 构建链

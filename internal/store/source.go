@@ -34,6 +34,12 @@ type Source struct {
 	TgThreadID string `json:"tg_thread_id"`
 	TgEndpoint string `json:"tg_endpoint"`
 
+	// 内置渠道发送源（钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot）。
+	// 渠道地址放 URL；ChannelSecret 是加签密钥（钉钉、飞书可选），
+	// ChannelTarget 是目标 ID（OneBot 的 QQ 号或群号；Bark 的群组名）。
+	ChannelSecret string `json:"channel_secret"`
+	ChannelTarget string `json:"channel_target"`
+
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
 	SMTPUser string `json:"smtp_user"`
@@ -58,10 +64,64 @@ type Source struct {
 // 自建 Bot API 服务器（telegram-bot-api）时可以改成自己的地址，结尾照样带 /bot。
 const DefaultTgEndpoint = "https://api.telegram.org/bot"
 
+// ChannelKinds 是内置渠道发送源的类型。
+//
+// 这些渠道没有「接收」这一侧：它们是各家的群机器人 / 推送服务的发送接口，
+// 只能把消息发出去。想要「自定义」就继续用 webhook 类型。
+var ChannelKinds = []string{"dingtalk", "wecom", "feishu", "bark", "serverchan", "wxpusher", "gotify", "onebot"}
+
+// IsChannelKind 报告 kind 是不是内置渠道。
+func IsChannelKind(kind string) bool {
+	for _, k := range ChannelKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSendOnlyKind 报告这个类型是不是只能发送（Telegram 和所有内置渠道）。
+func IsSendOnlyKind(kind string) bool {
+	return kind == "telegram" || IsChannelKind(kind)
+}
+
+// KindLabel 是类型在界面上的名字。
+func KindLabel(kind string) string {
+	switch kind {
+	case "webhook":
+		return "Webhook"
+	case "email":
+		return "邮件"
+	case "telegram":
+		return "Telegram"
+	case "dingtalk":
+		return "钉钉"
+	case "wecom":
+		return "企业微信"
+	case "feishu":
+		return "飞书"
+	case "bark":
+		return "Bark"
+	case "serverchan":
+		return "Server酱"
+	case "wxpusher":
+		return "WxPusher"
+	case "gotify":
+		return "Gotify"
+	case "onebot":
+		return "OneBot"
+	}
+	return kind
+}
+
+// AllKinds 是「类型」下拉里的全部类型，顺序也就是界面上的顺序：
+// 先是可以收发的通用类型，再是只能发送的渠道。
+var AllKinds = append([]string{"webhook", "email", "telegram"}, ChannelKinds...)
+
 // CanReceive 报告这个源能不能接收。
-// Telegram 只能往外发：Bot API 那头要主动拉更新，本项目不做，所以永远为假。
+// Telegram 和内置渠道只能往外发，所以永远为假。
 func (s *Source) CanReceive() bool {
-	if s.Kind == "telegram" {
+	if IsSendOnlyKind(s.Kind) {
 		return false
 	}
 	return s.Usage == "in" || s.Usage == "both"
@@ -77,6 +137,7 @@ func (s *Source) PollsMail() bool {
 const sourceCols = `id, name, kind, usage, enabled, slug, url, http_method, headers,
 	auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 	tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
+	channel_secret, channel_target,
 	smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 	imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 	created_at, updated_at`
@@ -87,6 +148,7 @@ func scanSource(sc interface{ Scan(...any) error }) (*Source, error) {
 		&v.ID, &v.Name, &v.Kind, &v.Usage, &v.Enabled, &v.Slug, &v.URL, &v.HTTPMethod, &v.Headers,
 		&v.AuthMode, &v.AuthHeader, &v.AuthSecret, &v.IPAllow, &v.UseProxy,
 		&v.TgToken, &v.TgChatID, &v.TgThreadID, &v.TgEndpoint,
+		&v.ChannelSecret, &v.ChannelTarget,
 		&v.SMTPHost, &v.SMTPPort, &v.SMTPUser, &v.SMTPPass, &v.SMTPTLS, &v.MailFrom, &v.MailTo,
 		&v.IMAPHost, &v.IMAPPort, &v.IMAPUser, &v.IMAPPass, &v.IMAPTLS, &v.IMAPFolder, &v.IMAPInterval,
 		&v.CreatedAt, &v.UpdatedAt,
@@ -168,13 +230,15 @@ func saveSource(db execer, v *Source) error {
 			name, kind, usage, enabled, slug, url, http_method, headers,
 			auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 			tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
+			channel_secret, channel_target,
 			smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 			imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 			created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
 			v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 			v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
+			v.ChannelSecret, v.ChannelTarget,
 			v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 			v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 			v.CreatedAt, v.UpdatedAt,
@@ -190,6 +254,7 @@ func saveSource(db execer, v *Source) error {
 		name=?, kind=?, usage=?, enabled=?, slug=?, url=?, http_method=?, headers=?,
 		auth_mode=?, auth_header=?, auth_secret=?, ip_allow=?, use_proxy=?,
 		tg_token=?, tg_chat_id=?, tg_thread_id=?, tg_endpoint=?,
+		channel_secret=?, channel_target=?,
 		smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, mail_from=?, mail_to=?,
 		imap_host=?, imap_port=?, imap_user=?, imap_pass=?, imap_tls=?, imap_folder=?, imap_interval=?,
 		updated_at=?
@@ -197,6 +262,7 @@ func saveSource(db execer, v *Source) error {
 		v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
 		v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 		v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
+		v.ChannelSecret, v.ChannelTarget,
 		v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 		v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 		v.UpdatedAt, v.ID,

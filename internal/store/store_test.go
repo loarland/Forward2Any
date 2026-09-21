@@ -738,3 +738,93 @@ func TestMigrateAddsTelegramColumnsToExistingDB(t *testing.T) {
 		t.Errorf("升级后的库写不进 tg_* 字段: %+v", again)
 	}
 }
+
+// 从 v3 升上来的老库：渠道那两列由 v4 的 ALTER 补上，老数据一个都不能动。
+func TestMigrateAddsChannelColumnsToExistingDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f2a.db")
+
+	// 手工造一个停在 user_version=3 的库：跑前三版迁移，再塞一行老数据。
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmts := range migrations[:3] {
+		for _, stmt := range stmts {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
+		t.Fatal(err)
+	}
+	// v3 的 sources 有 tg_*，但还没有 channel_* 那两列
+	if _, err := db.Exec(`INSERT INTO sources (name, kind, usage, enabled, url, http_method, headers, tg_token, tg_chat_id)
+		VALUES ('老 TG 源', 'telegram', 'out', 1, '', 'POST', '{}', '1:x', '@c')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("升级 v3 老库失败: %v", err)
+	}
+	defer st.Close()
+
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatalf("升级后读不出老库的源: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "老 TG 源" {
+		t.Fatalf("迁移把老数据弄丢了: %+v", list)
+	}
+	if list[0].ChannelSecret != "" || list[0].ChannelTarget != "" {
+		t.Errorf("老数据的 channel_* 应当是空的: %+v", list[0])
+	}
+	if list[0].TgToken != "1:x" || list[0].TgChatID != "@c" {
+		t.Errorf("v3 的字段被改动了: %+v", list[0])
+	}
+
+	// 补上的列要真能写
+	list[0].Kind = "dingtalk"
+	list[0].ChannelSecret = "SECabc"
+	list[0].ChannelTarget = "123456"
+	if err := st.SaveSource(list[0]); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ChannelSecret != "SECabc" || again.ChannelTarget != "123456" {
+		t.Errorf("升级后的库写不进 channel_* 字段: %+v", again)
+	}
+}
+
+// 内置渠道只能发送，不能接收 —— 界面上把它们放进接收源栏是走不通的。
+func TestChannelKindsAreSendOnly(t *testing.T) {
+	for _, kind := range ChannelKinds {
+		s := &Source{Kind: kind, Usage: "both"}
+		if s.CanReceive() {
+			t.Errorf("%s 不该能接收", kind)
+		}
+		if !s.CanSend() {
+			t.Errorf("%s 应当能发送", kind)
+		}
+		if !IsChannelKind(kind) || !IsSendOnlyKind(kind) {
+			t.Errorf("%s 应当被认成内置渠道/只能发送", kind)
+		}
+		if KindLabel(kind) == kind {
+			t.Errorf("%s 没有中文名", kind)
+		}
+	}
+	if IsChannelKind("webhook") || IsSendOnlyKind("email") {
+		t.Error("webhook / email 不该被当成内置渠道")
+	}
+	if len(AllKinds) != 3+len(ChannelKinds) {
+		t.Errorf("类型列表应当是 3 个通用类型 + %d 个渠道，实际 %d 个", len(ChannelKinds), len(AllKinds))
+	}
+}
