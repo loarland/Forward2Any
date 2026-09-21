@@ -570,6 +570,56 @@ curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/proxy-set.html"
 grep -q 'value="127.0.0.1:'"$PROXY_PORT"'"' "$WORK/proxy-set.html" || fail "设置页没有回填已保存的代理地址"
 pass "设置页能选 HTTP / HTTPS / SOCKS5，保存后回填正常"
 
+# 跨站写请求：默认按 IP:端口 访问就能用（Origin 与 Host 一致），
+# 反向代理改写了 Host 的场景靠设置页那一栏放行 —— 这是用户实际踩到的 403。
+echo
+echo "== 跨站写请求与信任来源 =="
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/trusted-empty.html"
+grep -q 'name="trusted_origins"' "$WORK/trusted-empty.html" || fail "设置页没有「信任的 Origin / Referer」那一栏"
+pass "设置页有「信任的 Origin / Referer」一栏"
+
+# 带 Origin 的写请求：模拟浏览器从域名访问、而代理把 Host 改成了 127.0.0.1:端口。
+# 表单本身是合法的（只少填可选项，处理器会沿用已存的值），这样 200 只可能来自校验失败，
+# 放行时必定是 303 跳转。
+cross_code() {
+  curl -s -o "$WORK/cross.out" -w '%{http_code}' -b "$JAR" \
+    -H "Origin: $1" \
+    --data "web_port=$APP_PORT" --data "base_url=$BASE" --data "admin_user=$ADMIN_USER" \
+    "$BASE/settings"
+}
+code=$(cross_code "https://hooks.example.com")
+[ "$code" = "403" ] || fail "Host 被改写且没配信任来源时应当 403，实际 $code"
+grep -q "跨站请求被拒绝" "$WORK/cross.out" || fail "403 页面没说清原因：$(head -c 200 "$WORK/cross.out")"
+pass "Host 被代理改写时域名来源被拒（403，页面带原因）"
+
+code=$(cross_code "$BASE")
+[ "$code" = "303" ] || fail "同源（IP:端口）写请求应当照常执行，实际 $code"
+pass "IP:端口 同源写请求不受影响"
+
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "trusted_origins=hooks.example.com" \
+  "$BASE/settings"
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/trusted-set.html"
+grep -q 'hooks.example.com' "$WORK/trusted-set.html" || fail "信任来源没有回填到设置页"
+code=$(cross_code "https://hooks.example.com")
+[ "$code" = "303" ] || fail "加了信任来源之后应当放行，实际 $code"
+pass "填进信任来源后，同一来源的写请求放行"
+
+code=$(cross_code "https://evil.example")
+[ "$code" = "403" ] || fail "不在信任来源里的站点仍应 403，实际 $code"
+pass "不在信任来源里的站点照样 403"
+
+# 清掉，别影响后面的用例
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "trusted_origins=" \
+  "$BASE/settings"
+
 # 一个勾了代理的发送源 + 一条规则
 post_form \
   --data-urlencode "name=代理目标" \

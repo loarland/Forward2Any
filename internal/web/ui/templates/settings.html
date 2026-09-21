@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>设置</h1>
-    <div class="sub">监听端口、管理员账号、网络代理、外观、重试策略与配置导入导出</div>
+    <div class="sub">监听端口、管理员账号、访问来源、网络代理、外观、重试策略与配置导入导出</div>
   </div>
 </div>
 
@@ -28,6 +28,22 @@
     改端口会在本进程内立即重新绑定监听，不用重启。
     但如果跑在 Docker 里，还得同步改 docker-compose.yml 的端口映射，否则容器外访问不到；
     这时候建议把「回调基址」也一并改成外部实际访问的地址。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>访问来源</h2>
+  <label>
+    <span>信任的 Origin / Referer <span class="hint">每行一个，可以留空</span></span>
+    <textarea name="trusted_origins" rows="3" placeholder="hooks.example.com">{{.S.TrustedOrigins}}</textarea>
+  </label>
+  <div class="note">
+    后台的写操作（登录、保存设置等）会核对请求的来源与本服务看到的地址是否一致，不一致就拒绝，防的是别的站点伪造请求。<br>
+    用 <span class="mono">IP:端口</span> 直接访问时两边天然一致，<strong>不用配任何东西</strong>；<br>
+    套了反向代理、而代理改写了 Host（nginx 没写 <span class="mono">proxy_set_header Host</span> 就会）时，
+    把浏览器里访问用的地址填到这里，例如 <span class="mono">hooks.example.com</span> 或
+    <span class="mono">https://hooks.example.com:8443</span>。<br>
+    「回调基址」里的主机名默认就认，不用重复填。
   </div>
 </div>
 

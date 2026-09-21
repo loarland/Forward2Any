@@ -333,7 +333,7 @@ http://<服务器地址>:16000/
 | **源** | 一个消息出入口。类型是 `Webhook`、`邮件` 或 `Telegram`；用途是「接收」「发送」或「两者」。 |
 | **规则** | 「哪些源收到的消息 → 转发到哪些源」，外加过滤条件与模板转换。 |
 | **投递** | 一次具体的转发动作。每条规则 × 每个目标源 = 一条投递记录，各自重试。 |
-| **设置** | 回调基址、管理员账号、监听端口、网络代理、外观、重试策略、日志保留期。 |
+| **设置** | 回调基址、管理员账号、监听端口、信任的 Origin / Referer、网络代理、外观、重试策略、日志保留期。 |
 
 规则的两个方向都是多选，所以下面这些不需要额外配置：
 
@@ -663,7 +663,8 @@ sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
 
 - **默认密码是一次性的**：用它登录后后台除设置页外全部被挡回，必须改密才能继续用。
 - 密码用 bcrypt 存储；会话 token 32 字节随机数，HttpOnly + SameSite=Lax cookie。
-- 后台的写操作额外校验 `Origin` / `Referer`（SameSite 之外的双保险）。
+- 后台的写操作额外校验 `Origin` / `Referer`（SameSite 之外的双保险）。认可的范围：同源请求、「回调基址」的
+  主机名、设置页「信任的 Origin / Referer」里列出的地址；两个头都不带的请求（curl、脚本）不校验。
 - 登录失败 5 次锁定 5 分钟。
 - `/hook/...` 接收端点不走会话鉴权（否则发送方没法调），由源自己的密钥 / 签名 / IP 白名单保护；
   未知路径一律 404，不区分「不存在」和「已停用」。
@@ -694,7 +695,7 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:16000;
-        proxy_set_header Host              $host;
+        proxy_set_header Host              $http_host;   # 原样转发，保留端口（$host 会去掉端口）
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -761,6 +762,21 @@ F2A_HOST_PORT=9000 docker compose up -d
 
 回调 URL 按「回调基址」生成，默认是 `http://localhost:<端口>`。到「设置」页把它改成外部真正能访问
 到的地址（或者启动时用 `F2A_BASE_URL` 指定），保存后回调地址和 curl 示例都会跟着变。
+
+### 反向代理后面报「跨站请求被拒绝」
+
+后台的写操作（登录、保存设置等）会拿请求的 `Origin`（没有就看 `Referer`）跟「本服务看到的地址」比，
+不一致就 403 —— 防的是别的站点伪造请求。用 `IP:端口` 直接访问时两边天然一致；反向代理常常把 Host
+改成上游地址（nginx 不写 `proxy_set_header Host` 时就是 `127.0.0.1:16000`），域名来的请求就被挡下了。
+
+任选一种解决：
+
+1. 让代理转发原始 Host：nginx 写 `proxy_set_header Host $http_host;`（`$host` 会去掉端口，非标准端口时对不上）。
+2. 到「设置 → 信任的 Origin / Referer」把浏览器里访问用的地址加进去，一行一个，例如 `hooks.example.com`。
+   代理已经改写了 Host、进不去后台时，先用 `IP:端口` 直接打开后台改这一项。
+
+「回调基址」的主机名默认就认，不用重复填。403 页面会写出「请求来自哪里」和「本服务看到的地址」，
+照着比一下就知道差在哪；服务日志里也有同一条记录。
 
 ### 发送方报 404
 

@@ -34,6 +34,7 @@ const (
 	KeyThemeMode           = "theme_mode"
 	KeyProxyType           = "proxy_type"
 	KeyProxyAddr           = "proxy_addr"
+	KeyTrustedOrigins      = "trusted_origins"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -51,6 +52,7 @@ type Settings struct {
 	ThemeMode           string // auto / light / dark
 	ProxyType           string // none / http / https / socks5
 	ProxyAddr           string // host:port，可带 用户名:密码@
+	TrustedOrigins      string // 每行一个主机名，写请求的 Origin/Referer 白名单
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -69,6 +71,7 @@ func DefaultSettings() *Settings {
 		ThemeMode:           "auto",
 		ProxyType:           "none",
 		ProxyAddr:           "",
+		TrustedOrigins:      "",
 	}
 }
 
@@ -108,6 +111,7 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyThemeMode, exist.ThemeMode)
 	setIfMissing(KeyProxyType, exist.ProxyType)
 	setIfMissing(KeyProxyAddr, exist.ProxyAddr)
+	setIfMissing(KeyTrustedOrigins, exist.TrustedOrigins)
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -159,6 +163,7 @@ func (s *Store) Settings() (*Settings, error) {
 	d.ThemeMode = get(KeyThemeMode, d.ThemeMode)
 	d.ProxyType = get(KeyProxyType, d.ProxyType)
 	d.ProxyAddr = get(KeyProxyAddr, d.ProxyAddr)
+	d.TrustedOrigins = get(KeyTrustedOrigins, d.TrustedOrigins)
 	d.raw = raw
 	return d, nil
 }
@@ -238,6 +243,7 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyThemeMode:           v.ThemeMode,
 		KeyProxyType:           v.ProxyType,
 		KeyProxyAddr:           v.ProxyAddr,
+		KeyTrustedOrigins:      v.TrustedOrigins,
 	})
 }
 

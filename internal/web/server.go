@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,10 @@ type Server struct {
 	// theme 缓存当前外观（配色 + 亮暗）。同样是为了免掉每个请求一次查库。
 	theme atomic.Value
 
+	// trustedHosts 缓存跨站校验认的主机名（回调基址 + 设置里的信任列表）。
+	// 每个写请求都要看，所以同样不能每次查库。
+	trustedHosts atomic.Value
+
 	mu   sync.Mutex
 	srv  *http.Server
 	ln   net.Listener
@@ -53,7 +58,33 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 	}
 	s.refreshPassFlag()
 	s.refreshTheme()
+	s.refreshTrustedHosts()
 	return s
+}
+
+// refreshTrustedHosts 缓存跨站校验认的主机名：回调基址里的主机 + 设置里列的信任来源。
+// 启动时和保存设置之后各调一次。
+func (s *Server) refreshTrustedHosts() {
+	hosts := []string{}
+	settings, err := s.store.Settings()
+	if err != nil {
+		s.log.Error("读取设置失败，跨站校验只认请求上的 Host", "err", err)
+	} else {
+		if u, err := url.Parse(settings.BaseURL); err == nil && u.Host != "" {
+			hosts = append(hosts, u.Host)
+		}
+		list, _ := parseTrustedOrigins(settings.TrustedOrigins)
+		hosts = append(hosts, list...)
+	}
+	s.trustedHosts.Store(hosts)
+}
+
+// trustedHostList 取缓存里的额外主机名，没有就是空表（此时只认请求上的 Host）。
+func (s *Server) trustedHostList() []string {
+	if v, ok := s.trustedHosts.Load().([]string); ok {
+		return v
+	}
+	return nil
 }
 
 // refreshPassFlag 同步「是否仍在使用默认密码」的缓存。
