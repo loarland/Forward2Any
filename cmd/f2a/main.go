@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 
 	"github.com/loarland/Forward2Any/internal/config"
 	"github.com/loarland/Forward2Any/internal/engine"
+	"github.com/loarland/Forward2Any/internal/logging"
 	"github.com/loarland/Forward2Any/internal/mailin"
 	"github.com/loarland/Forward2Any/internal/store"
 	"github.com/loarland/Forward2Any/internal/web"
@@ -102,7 +102,7 @@ func run() error {
 		return err
 	}
 
-	log := newLogger(cfg.LogLevel)
+	log := logging.New(cfg.LogLevel)
 	slog.SetDefault(log)
 
 	st, err := store.Open(cfg.DataDir)
@@ -125,6 +125,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// 日志和页面上的时间都按「设置 → 时区」显示（容器里系统时区通常是 UTC）。
+	logging.SetLocation(settings.Location())
 
 	log.Info("Forward2Any 已启动",
 		"版本", version, "db", st.Path, "端口", settings.WebPort,
@@ -158,19 +160,4 @@ func run() error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutCtx)
-}
-
-func newLogger(level string) *slog.Logger {
-	var lv slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lv = slog.LevelDebug
-	case "warn":
-		lv = slog.LevelWarn
-	case "error":
-		lv = slog.LevelError
-	default:
-		lv = slog.LevelInfo
-	}
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
 }

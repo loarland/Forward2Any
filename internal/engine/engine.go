@@ -192,7 +192,8 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 		Source:  SourceView(in.Source),
 		Headers: in.Headers,
 		TraceID: in.TraceID,
-		Now:     time.Now(),
+		// 模板里的 {{.Now}} 按设置里配的时区给，跟页面上显示的时间口径一致。
+		Now: time.Now().In(settings.Location()),
 	}
 	hopChain := strings.Join(append(append([]string{}, in.Hops...), in.Source.Slug), ",")
 

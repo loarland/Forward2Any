@@ -114,6 +114,45 @@
 </div>
 
 <div class="panel">
+  <h2>时区</h2>
+  <label>
+    <span>显示时间用的时区 <span class="hint">IANA 名称；留空表示跟随系统（容器里通常是 UTC）</span></span>
+    <input type="text" name="timezone" value="{{.S.Timezone}}" list="tz-list" placeholder="Asia/Shanghai" autocomplete="off">
+  </label>
+  {{/* 常用时区做成候选，省得凭记忆敲名字；填别的 IANA 名称也行，保存时会校验。 */}}
+  <datalist id="tz-list">
+    <option value="Asia/Shanghai"></option>
+    <option value="Asia/Hong_Kong"></option>
+    <option value="Asia/Taipei"></option>
+    <option value="Asia/Tokyo"></option>
+    <option value="Asia/Seoul"></option>
+    <option value="Asia/Singapore"></option>
+    <option value="Asia/Bangkok"></option>
+    <option value="Asia/Kolkata"></option>
+    <option value="Asia/Dubai"></option>
+    <option value="Europe/London"></option>
+    <option value="Europe/Paris"></option>
+    <option value="Europe/Moscow"></option>
+    <option value="America/New_York"></option>
+    <option value="America/Chicago"></option>
+    <option value="America/Denver"></option>
+    <option value="America/Los_Angeles"></option>
+    <option value="Australia/Sydney"></option>
+    <option value="UTC"></option>
+  </datalist>
+  <div class="note">
+    投递日志、源/规则的创建时间、模板里的 <span class="mono">&#123;&#123;.Now&#125;&#125;</span>
+    以及日志行的时间戳都按这里显示。<br>
+    库里存的是 Unix 时间戳（与时区无关），所以改这个只影响显示，不会动已有数据，
+    也不会影响投递本身。<br>
+    都不填时按进程的系统时区显示 —— Docker / systemd 里默认就是 UTC，所以看到的时间会比北京时间早 8 小时。
+    <br>
+    当前生效：<span class="mono">{{.ZoneLabel}}</span>，现在的时间是
+    <span class="mono">{{.NowText}}</span>。
+  </div>
+</div>
+
+<div class="panel">
   <h2>外观</h2>
   <div class="grid2">
     <label>

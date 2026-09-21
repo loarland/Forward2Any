@@ -31,10 +31,17 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, errMsg, 
 		s.fail(w, "读取设置失败", err)
 		return
 	}
+	loc := settings.Location()
+	zoneLabel := strings.TrimSpace(settings.Timezone)
+	if zoneLabel == "" {
+		zoneLabel = "跟随系统（" + time.Now().In(loc).Format("MST") + "）"
+	}
 	data := map[string]any{
 		"Title":       "设置",
 		"Nav":         "settings",
 		"S":           settings,
+		"ZoneLabel":   zoneLabel,
+		"NowText":     time.Now().In(loc).Format("2006-01-02 15:04:05 MST"),
 		"RunningPort": s.Port(),
 		"DBPath":      s.store.Path,
 		"Error":       errMsg,
@@ -81,6 +88,11 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// 开关：模板里复选框后面跟了个 hidden 的 "0"，所以未勾选时也能读到明确的值。
 	if _, ok := r.PostForm["origin_check"]; ok {
 		next.OriginCheck = r.PostFormValue("origin_check") == "1"
+	}
+	// 时区和信任来源一样，只在表单确实提交了它时才动：
+	// 别的只提交部分字段的请求不该把它清成「跟随系统」。
+	if _, ok := r.PostForm["timezone"]; ok {
+		next.Timezone = strings.TrimSpace(formValue(r, "timezone"))
 	}
 	next.RetryMax = formInt(r, "retry_max", current.RetryMax)
 	next.RetryBackoffSeconds = formInt(r, "retry_backoff_seconds", current.RetryBackoffSeconds)
@@ -148,6 +160,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	s.refreshTheme()
 	// 回调基址、开关或允许列表可能改了，跨站校验策略跟着更新。
 	s.refreshOriginPolicy()
+	// 时区可能改了：页面时间和日志时间都跟着换。
+	s.refreshTimezone()
 	s.log.Info("更新设置", "端口", next.WebPort, "管理员", next.AdminUser)
 
 	if next.WebPort != oldPort {
@@ -195,6 +209,13 @@ func validateSettings(v *store.Settings) error {
 	}
 	if v.LogRetentionDays < 1 {
 		return errors.New("日志保留天数至少 1 天")
+	}
+	// 时区留空表示跟随系统；填了就必须是 Go 认得的 IANA 名称，
+	// 否则页面上的时间会静默退回系统时区，用户以为设上了其实没生效。
+	if v.Timezone != "" {
+		if _, err := time.LoadLocation(v.Timezone); err != nil {
+			return fmt.Errorf("时区 %q 不认识。要填 IANA 名称，例如 Asia/Shanghai、Asia/Tokyo、Europe/London", v.Timezone)
+		}
 	}
 	return validateProxy(v.ProxyType, v.ProxyAddr)
 }

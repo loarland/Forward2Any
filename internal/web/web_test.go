@@ -2152,3 +2152,85 @@ func TestSourceDefaultTemplateSyntaxRejected(t *testing.T) {
 		t.Fatalf("数组下标写法应当给出 index 提示，实际 %v", err)
 	}
 }
+
+// 时区设置：页面有这一格、认得的名字存得下、写错的名字当场拦下来（不能静默退回系统时区）。
+func TestSettingsTimezone(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+
+	// 页面里有这一格，并显示当前生效的时区
+	rec := httptest.NewRecorder()
+	s.renderSettings(rec, httptest.NewRequest("GET", "/settings", nil), "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("设置页渲染失败：%d", rec.Code)
+	}
+	page := rec.Body.String()
+	for _, want := range []string{`name="timezone"`, "跟随系统", "当前生效"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("设置页里缺少 %s", want)
+		}
+	}
+
+	// 保存一个合法时区
+	form := url.Values{
+		"web_port": {"16000"}, "admin_user": {"admin"},
+		"base_url":  {"http://127.0.0.1:16000"},
+		"retry_max": {"5"}, "retry_backoff_seconds": {"10"},
+		"payload_max_bytes": {"65536"}, "log_retention_days": {"30"},
+		"timezone": {"Asia/Shanghai"},
+	}
+	r := httptest.NewRequest("POST", "/settings", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := *cur
+	next.Timezone = strings.TrimSpace(form.Get("timezone"))
+	if err := validateSettings(&next); err != nil {
+		t.Fatalf("合法时区不该报错：%v", err)
+	}
+	if err := st.SaveSettings(&next); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timezone != "Asia/Shanghai" {
+		t.Fatalf("时区没存下来：%q", got.Timezone)
+	}
+
+	// 页面时间跟着时区走：同一个时间戳，在 Asia/Shanghai 下比 UTC 早 8 小时（数字上 +8）
+	s.refreshTimezone()
+	rec2 := httptest.NewRecorder()
+	s.renderSettings(rec2, httptest.NewRequest("GET", "/settings", nil), "", "")
+	if !strings.Contains(rec2.Body.String(), "Asia/Shanghai") {
+		t.Error("设置页应当显示当前生效的时区名")
+	}
+
+	// 非法时区要被 validateSettings 拦住
+	bad := *cur
+	bad.Timezone = "Asia/NotACity"
+	err = validateSettings(&bad)
+	if err == nil {
+		t.Fatal("非法时区应当被拒绝")
+	}
+	if !strings.Contains(err.Error(), "Asia/Shanghai") {
+		t.Errorf("报错里应当给个正确例子，实际 %q", err.Error())
+	}
+
+	// 留空表示跟随系统，允许
+	empty := *cur
+	empty.Timezone = ""
+	if err := validateSettings(&empty); err != nil {
+		t.Errorf("留空（跟随系统）应当允许，实际 %v", err)
+	}
+}

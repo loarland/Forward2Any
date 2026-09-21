@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/loarland/Forward2Any/internal/store"
@@ -21,12 +22,33 @@ var templatesFS embed.FS
 //go:embed static
 var StaticFS embed.FS
 
+// displayLoc 是页面上展示时间用的时区。
+//
+// 数据库里存的一律是 Unix 秒，跟时区无关；只有渲染成字符串时才需要它。
+// 默认跟随系统（容器里通常是 UTC），设置页保存时由 SetLocation 换成用户选的。
+var displayLoc atomic.Pointer[time.Location]
+
+// SetLocation 设置页面展示时间用的时区（nil 表示回到系统时区）。
+func SetLocation(loc *time.Location) {
+	if loc == nil {
+		loc = time.Local
+	}
+	displayLoc.Store(loc)
+}
+
+func location() *time.Location {
+	if loc := displayLoc.Load(); loc != nil {
+		return loc
+	}
+	return time.Local
+}
+
 var funcs = template.FuncMap{
 	"ts": func(v int64) string {
 		if v == 0 {
 			return "—"
 		}
-		return time.Unix(v, 0).Format("2006-01-02 15:04:05")
+		return time.Unix(v, 0).In(location()).Format("2006-01-02 15:04:05")
 	},
 	"truncate": func(n int, s string) string {
 		r := []rune(s)

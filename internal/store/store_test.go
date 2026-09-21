@@ -891,3 +891,59 @@ func TestMigrateAddsDefaultTemplateColumnsToExistingDB(t *testing.T) {
 		t.Errorf("升级后的库写不进默认模板字段: %+v", again)
 	}
 }
+
+// 时区设置：留空跟随系统，认得的名字解析得开，写错的名字退回系统时区（保存时会被拦下）。
+func TestSettingsLocation(t *testing.T) {
+	def := DefaultSettings()
+	if def.Timezone != "" {
+		t.Errorf("默认应当是跟随系统（空串），实际 %q", def.Timezone)
+	}
+	if got := def.Location(); got != time.Local {
+		t.Errorf("留空时应当返回系统时区，实际 %v", got)
+	}
+
+	sh := &Settings{Timezone: "Asia/Shanghai"}
+	if got := sh.Location().String(); got != "Asia/Shanghai" {
+		t.Errorf("Asia/Shanghai 应当解析成对应时区，实际 %q", got)
+	}
+	// 故意写错：不能 panic，也不能让页面打不开
+	bad := &Settings{Timezone: "Asia/NotACity"}
+	if got := bad.Location(); got != time.Local {
+		t.Errorf("坏名字应当退回系统时区，实际 %v", got)
+	}
+	// 前后空白要容忍（表单里粘贴过来常见）
+	if got := (&Settings{Timezone: "  Asia/Tokyo  "}).Location().String(); got != "Asia/Tokyo" {
+		t.Errorf("时区名两边的空白应当忽略，实际 %q", got)
+	}
+}
+
+// 时区要能存能读。
+func TestSaveTimezoneSetting(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Timezone != "" {
+		t.Fatalf("新库的时区应当是空的，实际 %q", s.Timezone)
+	}
+	s.Timezone = "Asia/Shanghai"
+	if err := st.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Timezone != "Asia/Shanghai" {
+		t.Errorf("时区没存下来，实际 %q", again.Timezone)
+	}
+	if again.Location().String() != "Asia/Shanghai" {
+		t.Errorf("读回来的时区解析不对：%v", again.Location())
+	}
+}

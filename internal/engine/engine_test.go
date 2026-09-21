@@ -856,3 +856,55 @@ func TestSubmitDefaultTemplateSetsJSONContentType(t *testing.T) {
 		t.Errorf("模板改写过报文时 Content-Type 应为 application/json，实际 %q", list[0].ReqHeaders)
 	}
 }
+
+// 模板里的 {{.Now}} 要按设置里配的时区给，而不是进程的本地时区（容器里是 UTC）。
+func TestTemplateNowFollowsSettingsTimezone(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	settings, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Timezone = "Asia/Shanghai"
+	if err := st.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "tz1", HTTPMethod: "POST", Headers: "{}"}
+	for _, s := range []*store.Source{out, in} {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Format "MST" 打出来的是时区缩写：配了上海就是 CST
+	if err := st.SaveRule(&store.Rule{
+		Name: "带时间", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID},
+		BodyTemplate: `{{.Now.Format "MST"}}`, HeadersTemplate: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := eng.Submit(&Inbound{Source: in, Payload: []byte(`{}`),
+		Parsed: map[string]any{}, TraceID: "tz"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListDeliveries(store.DeliveryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应当有 1 条投递记录，实际 %d 条", len(list))
+	}
+	if list[0].Rendered != "CST" {
+		t.Errorf("配了 Asia/Shanghai 时 {{.Now}} 应当是 CST，实际 %q", list[0].Rendered)
+	}
+}

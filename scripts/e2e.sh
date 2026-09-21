@@ -1260,6 +1260,89 @@ grep -q '✅ 测试通知' "$WORK/def-detail.html" || fail "默认主题模板�
 grep -q '\[默认模板入口\]' "$WORK/def-detail.html" && fail "主题还是自动生成的 [源名] 形式，默认主题模板没生效"
 pass "默认主题模板生效（主题就是 payload 里的 title）"
 echo
+echo "== 时区设置 =="
+
+# 页面上的时间按设置里的时区显示：默认（跟随系统 = 容器/进程的 UTC）与 Asia/Shanghai 差 8 小时。
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings" > "$WORK/tz-before.html"
+grep -q 'name="timezone"' "$WORK/tz-before.html" || fail "设置页没有时区这一格"
+grep -q '当前生效' "$WORK/tz-before.html" || fail "设置页没有显示当前生效的时区"
+pass "设置页有时区设置，并显示当前生效的时区"
+
+# 取投递列表里第一条记录的时间（列表用的是 2006-01-02 15:04:05 格式）
+tz_first_time() {
+  curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries" \
+    | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1
+}
+# 保存一个非法时区要被挡下（不能静默退回系统时区）
+code=$(curl -s -o "$WORK/tz-bad.html" -w '%{http_code}' -b "$JAR" -c "$JAR" -X POST \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "timezone=Asia/NotACity" \
+  "$BASE/settings")
+grep -q "不认识" "$WORK/tz-bad.html" || fail "非法时区应当被拦下来，实际：$(head -c 200 "$WORK/tz-bad.html")"
+pass "非法时区名被拒绝"
+
+# 先固定成 UTC 作为基准：开发机上系统时区可能就是 CST，
+# 「跟随系统」在不同环境里不一样，不能拿来当基准。
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "timezone=UTC" \
+  "$BASE/settings"
+BEFORE_TZ=$(tz_first_time)
+[ -n "$BEFORE_TZ" ] || fail "切到 UTC 后投递列表里没找到时间"
+
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "timezone=Asia/Shanghai" \
+  "$BASE/settings"
+
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings" > "$WORK/tz-after.html"
+grep -q 'value="Asia/Shanghai"' "$WORK/tz-after.html" || fail "保存后设置页没有回填 Asia/Shanghai"
+pass "时区保存成功并回填"
+
+AFTER_TZ=$(tz_first_time)
+[ "$BEFORE_TZ" != "$AFTER_TZ" ] || fail "换成 Asia/Shanghai 后同一条记录的时间没变（还是 $AFTER_TZ）"
+python3 - "$BEFORE_TZ" "$AFTER_TZ" <<'PY' || fail "时间差不是 8 小时：$BEFORE_TZ → $AFTER_TZ"
+import datetime, sys
+fmt = "%Y-%m-%d %H:%M:%S"
+a = datetime.datetime.strptime(sys.argv[1], fmt)
+b = datetime.datetime.strptime(sys.argv[2], fmt)
+delta = (b - a).total_seconds() % 86400
+# 同一条记录的时间在 +8 时区里应当晚 8 小时（跨天时取模后是 8 小时）
+sys.exit(0 if abs(delta - 8 * 3600) < 1 else 1)
+PY
+pass "投递列表里的时间跟着时区走了（UTC → Asia/Shanghai，+8 小时）"
+
+# 改回跟随系统，别影响后面的用例
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "timezone=" \
+  "$BASE/settings"
+pass "时区可以改回「跟随系统」"
+echo
 echo "== 端口热切换 =="
 NEW_PORT=$((APP_PORT + 1))
 post_form \

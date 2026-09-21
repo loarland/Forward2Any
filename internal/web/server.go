@@ -60,6 +60,7 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 	s.refreshPassFlag()
 	s.refreshTheme()
 	s.refreshOriginPolicy()
+	s.refreshTimezone()
 	return s
 }
 

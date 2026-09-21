@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 // DefaultAdminPassword 是首次启动时使用的默认管理员密码。
@@ -36,6 +39,7 @@ const (
 	KeyProxyAddr           = "proxy_addr"
 	KeyTrustedOrigins      = "trusted_origins"
 	KeyOriginCheck         = "origin_check"
+	KeyTimezone            = "timezone"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -55,6 +59,7 @@ type Settings struct {
 	ProxyAddr           string // host:port，可带 用户名:密码@
 	TrustedOrigins      string // 允许列表，逗号或换行分隔
 	OriginCheck         bool   // 是否校验写请求的 Origin/Referer
+	Timezone            string // IANA 时区名，如 Asia/Shanghai；留空表示跟随系统
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -75,6 +80,7 @@ func DefaultSettings() *Settings {
 		ProxyAddr:           "",
 		TrustedOrigins:      "",
 		OriginCheck:         true,
+		Timezone:            "",
 	}
 }
 
@@ -116,6 +122,7 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyProxyAddr, exist.ProxyAddr)
 	setIfMissing(KeyTrustedOrigins, exist.TrustedOrigins)
 	setIfMissing(KeyOriginCheck, boolStr(exist.OriginCheck))
+	setIfMissing(KeyTimezone, exist.Timezone)
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -169,6 +176,8 @@ func (s *Store) Settings() (*Settings, error) {
 	d.ProxyAddr = get(KeyProxyAddr, d.ProxyAddr)
 	d.TrustedOrigins = get(KeyTrustedOrigins, d.TrustedOrigins)
 	d.OriginCheck = get(KeyOriginCheck, "1") == "1"
+	// 时区没有「默认值」可言：留空就是跟随系统，所以不能用 get 的兜底语义。
+	d.Timezone = strings.TrimSpace(raw[KeyTimezone])
 	d.raw = raw
 	return d, nil
 }
@@ -250,6 +259,7 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyProxyAddr:           v.ProxyAddr,
 		KeyTrustedOrigins:      v.TrustedOrigins,
 		KeyOriginCheck:         boolStr(v.OriginCheck),
+		KeyTimezone:            v.Timezone,
 	})
 }
 
@@ -278,3 +288,27 @@ func RandomHex(n int) (string, error) {
 
 // 让 database/sql 的哨兵错误与包内错误统一。
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+
+// 时区缓存：LoadLocation 每次都要去找并解析 tzdata，而展示层是按行调用的，
+// 同一个名字解析一次就够了。
+var locCache sync.Map // map[string]*time.Location
+
+// Location 返回设置里配的时区。
+//
+// 留空表示跟随系统（容器里通常是 UTC）；名字不认识时也退回系统时区 ——
+// 保存时已经校验过，这里的兜底只是为了别让界面因为一个坏值整页打不开。
+func (s *Settings) Location() *time.Location {
+	name := strings.TrimSpace(s.Timezone)
+	if name == "" {
+		return time.Local
+	}
+	if v, ok := locCache.Load(name); ok {
+		return v.(*time.Location)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	locCache.Store(name, loc)
+	return loc
+}
