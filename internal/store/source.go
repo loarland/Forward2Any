@@ -28,6 +28,12 @@ type Source struct {
 	// 只有用途包含发送的源才认这个值，其它情况下引擎会忽略它。
 	UseProxy bool `json:"use_proxy"`
 
+	// Telegram 发送源。TgEndpoint 留空表示用官方地址，填了就当自建 Bot API 服务器用。
+	TgToken    string `json:"tg_token"`
+	TgChatID   string `json:"tg_chat_id"`
+	TgThreadID string `json:"tg_thread_id"`
+	TgEndpoint string `json:"tg_endpoint"`
+
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
 	SMTPUser string `json:"smtp_user"`
@@ -48,8 +54,20 @@ type Source struct {
 	UpdatedAt int64 `json:"updated_at"`
 }
 
-func (s *Source) CanReceive() bool { return s.Usage == "in" || s.Usage == "both" }
-func (s *Source) CanSend() bool    { return s.Usage == "out" || s.Usage == "both" }
+// DefaultTgEndpoint 是 Telegram Bot API 的默认前缀，token 会拼在它后面。
+// 自建 Bot API 服务器（telegram-bot-api）时可以改成自己的地址，结尾照样带 /bot。
+const DefaultTgEndpoint = "https://api.telegram.org/bot"
+
+// CanReceive 报告这个源能不能接收。
+// Telegram 只能往外发：Bot API 那头要主动拉更新，本项目不做，所以永远为假。
+func (s *Source) CanReceive() bool {
+	if s.Kind == "telegram" {
+		return false
+	}
+	return s.Usage == "in" || s.Usage == "both"
+}
+
+func (s *Source) CanSend() bool { return s.Usage == "out" || s.Usage == "both" }
 
 // PollsMail 表示这个源需要 IMAP 轮询线程。
 func (s *Source) PollsMail() bool {
@@ -58,6 +76,7 @@ func (s *Source) PollsMail() bool {
 
 const sourceCols = `id, name, kind, usage, enabled, slug, url, http_method, headers,
 	auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
+	tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
 	smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 	imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 	created_at, updated_at`
@@ -67,6 +86,7 @@ func scanSource(sc interface{ Scan(...any) error }) (*Source, error) {
 	err := sc.Scan(
 		&v.ID, &v.Name, &v.Kind, &v.Usage, &v.Enabled, &v.Slug, &v.URL, &v.HTTPMethod, &v.Headers,
 		&v.AuthMode, &v.AuthHeader, &v.AuthSecret, &v.IPAllow, &v.UseProxy,
+		&v.TgToken, &v.TgChatID, &v.TgThreadID, &v.TgEndpoint,
 		&v.SMTPHost, &v.SMTPPort, &v.SMTPUser, &v.SMTPPass, &v.SMTPTLS, &v.MailFrom, &v.MailTo,
 		&v.IMAPHost, &v.IMAPPort, &v.IMAPUser, &v.IMAPPass, &v.IMAPTLS, &v.IMAPFolder, &v.IMAPInterval,
 		&v.CreatedAt, &v.UpdatedAt,
@@ -147,12 +167,14 @@ func saveSource(db execer, v *Source) error {
 		res, err := db.Exec(`INSERT INTO sources (
 			name, kind, usage, enabled, slug, url, http_method, headers,
 			auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
+			tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
 			smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 			imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 			created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
 			v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
+			v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
 			v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 			v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 			v.CreatedAt, v.UpdatedAt,
@@ -167,12 +189,14 @@ func saveSource(db execer, v *Source) error {
 	_, err := db.Exec(`UPDATE sources SET
 		name=?, kind=?, usage=?, enabled=?, slug=?, url=?, http_method=?, headers=?,
 		auth_mode=?, auth_header=?, auth_secret=?, ip_allow=?, use_proxy=?,
+		tg_token=?, tg_chat_id=?, tg_thread_id=?, tg_endpoint=?,
 		smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, mail_from=?, mail_to=?,
 		imap_host=?, imap_port=?, imap_user=?, imap_pass=?, imap_tls=?, imap_folder=?, imap_interval=?,
 		updated_at=?
 		WHERE id=?`,
 		v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
 		v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
+		v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
 		v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 		v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 		v.UpdatedAt, v.ID,

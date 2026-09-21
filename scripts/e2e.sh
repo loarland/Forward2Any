@@ -73,6 +73,16 @@ class H(http.server.BaseHTTPRequestHandler):
                 if v:
                     f.write(('%s: %s\n' % (k, v)).encode())
             f.write(b'BODY ' + body + b'\n---\n')
+        # 路径里带 /bot 的当成 Telegram Bot API：回它那套信封（成不成看 ok），
+        # 好让端到端真的走一遍「解析响应、判定成功」这段。
+        if '/bot' in self.path:
+            resp = b'{"ok":true,"result":{"message_id":1,"chat":{"id":-1001234567890}}}'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
+            return
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'ok')
@@ -628,6 +638,116 @@ grep -q 'value="127.0.0.1:'"$PROXY_PORT"'"' "$WORK/proxy-after-bad.html" \
 pass "非法代理地址被挡下，原值不变"
 
 echo
+echo "== Telegram 发送 =="
+# 先用界面把几种填错的情况挡一遍：这些错误必须在保存时就说清楚，
+# 而不是等到投递失败才发现（投递日志里只剩一句 Telegram 的报错）。
+# 保存失败时页面顶部会渲染一条 .alert.err；保存成功是 303 + 空响应体（没有这条）。
+# 「被挡下」= 响应里带着错误条 —— 只看状态码不够，校验失败的响应也是 200。
+# 调用方传的字段放在前面：表单取值取的是第一个，这样才能覆盖掉下面的默认值。
+tg_reject() {
+  curl -s -b "$JAR" -c "$JAR" -o "$WORK/tg-reject.html" -X POST \
+    "$@" \
+    --data-urlencode "name=Telegram 测试" \
+    --data-urlencode "kind=telegram" \
+    --data-urlencode "usage=out" \
+    --data-urlencode "enabled=1" \
+    --data-urlencode "tg_token=123456:e2e-token" \
+    --data-urlencode "tg_chat_id=-1001234567890" \
+    --data-urlencode "tg_endpoint=http://127.0.0.1:$MOCK_PORT/bot" \
+    "$BASE/sources"
+  grep -q 'class="alert err"' "$WORK/tg-reject.html"
+}
+
+tg_reject --data-urlencode "usage=in" || fail "Telegram 类型不该允许用作接收源"
+grep -q "只能用作发送源" "$WORK/tg-reject.html" || fail "接收用途的 Telegram 源没有给出原因"
+tg_reject --data-urlencode "usage=out" --data-urlencode "tg_token=" \
+  || fail "缺 Bot Token 时不该保存成功"
+grep -q "Bot Token" "$WORK/tg-reject.html" || fail "缺 Bot Token 时没有说明是哪个字段"
+tg_reject --data-urlencode "usage=out" --data-urlencode "tg_endpoint=https://api.telegram.org" \
+  || fail "端点没以 /bot 结尾时不该保存成功（token 要直接拼在它后面）"
+grep -q "/bot" "$WORK/tg-reject.html" || fail "端点出错时没有给出正确形状"
+tg_reject --data-urlencode "usage=out" --data-urlencode "tg_thread_id=第一话题" \
+  || fail "话题 ID 不是数字时不该保存成功"
+pass "Telegram 源的用途、Token、端点、话题 ID 都会在保存时校验"
+
+# 请求端点指向 mock：这样能验证真实的请求形状（路径里带 token、body 是 Bot API 的 JSON），
+# 又不用真去连 api.telegram.org。
+post_form \
+  --data-urlencode "name=Telegram 目标" \
+  --data-urlencode "kind=telegram" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "tg_token=123456:e2e-token" \
+  --data-urlencode "tg_chat_id=-1001234567890" \
+  --data-urlencode "tg_thread_id=42" \
+  --data-urlencode "tg_endpoint=http://127.0.0.1:$MOCK_PORT/bot" \
+  "$BASE/sources"
+
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$WORK/tg-sources.html"
+grep -q 'data-kind="telegram"' "$WORK/tg-sources.html" || fail "源列表里没有 Telegram 类型的行"
+grep -q "Telegram 目标" "$WORK/tg-sources.html" || fail "Telegram 源没有出现在列表里"
+grep -q 'value="telegram">Telegram' "$WORK/tg-sources.html" || fail "类型筛选里没有 Telegram 选项"
+grep -q 'Chat ID' "$WORK/tg-sources.html" || fail "源卡片上没有显示 Chat ID"
+curl -fsS -b "$JAR" "$BASE/sources/4/edit" > "$WORK/tg-form.html"
+for v in 'value="123456:e2e-token"' 'value="-1001234567890"' 'value="42"' \
+         'value="http://127.0.0.1:'"$MOCK_PORT"'/bot"'; do
+  grep -q "$v" "$WORK/tg-form.html" || fail "Telegram 参数没有回填：$v"
+done
+pass "Telegram 源已创建，源卡片显示 Chat ID，编辑页能回填全部参数"
+
+post_form \
+  --data-urlencode "name=转发到 Telegram" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=1" \
+  --data-urlencode "to_source_ids=4" \
+  --data-urlencode "filters=action eq tg" \
+  --data-urlencode "body_template=" \
+  --data-urlencode "subject_template=" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+curl -s -o /dev/null -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"tg"}' "$BASE/hook/gh-e2e"
+wait_for "grep -q 'PATH /bot123456:e2e-token/sendMessage' $RECEIVED" || fail "Telegram 请求没有发出去"
+grep -q 'PATH /bot123456:e2e-token/sendMessage' "$RECEIVED" || fail "Bot API 的路径不对：$(cat "$RECEIVED")"
+grep -q 'Content-Type: application/json' "$RECEIVED" || fail "Bot API 请求的 Content-Type 不对"
+grep -qF '"chat_id":-1001234567890' "$RECEIVED" || fail "chat_id 没有按 JSON 数字发出"
+grep -qF '"message_thread_id":42' "$RECEIVED" || fail "话题 ID 没有带上"
+grep -qF '"text":"{\"action\":\"tg\"}"' "$RECEIVED" || fail "正文没有原样发出去：$(cat "$RECEIVED")"
+pass "转发到 Telegram：路径带 token、chat_id / message_thread_id / 正文都对"
+
+# Bot API 用 HTTP 200 + {"ok":false} 报错，所以「收到回包」不等于成功 —— 得看日志里记成了什么。
+tg_ok=0
+i=0
+while [ "$i" -lt 50 ]; do
+  curl -fsS -b "$JAR" --get --data-urlencode "q=Telegram 目标" --data-urlencode "status=success" \
+    "$BASE/deliveries" > "$WORK/tg-dl.html" || true
+  if grep -qE '/deliveries/[0-9]+' "$WORK/tg-dl.html"; then tg_ok=1; break; fi
+  sleep 0.2
+  i=$((i + 1))
+done
+[ "$tg_ok" = "1" ] || fail "Telegram 投递没有被记成成功"
+pass "Telegram 回包按 ok:true 判定，投递记成成功"
+
+# 代理对 Telegram 同样有效：勾上之后请求要落在正向代理上。
+post_form \
+  --data-urlencode "name=Telegram 目标" \
+  --data-urlencode "kind=telegram" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "tg_token=123456:e2e-token" \
+  --data-urlencode "tg_chat_id=-1001234567890" \
+  --data-urlencode "tg_thread_id=42" \
+  --data-urlencode "tg_endpoint=http://127.0.0.1:$MOCK_PORT/bot" \
+  --data-urlencode "use_proxy=1" \
+  "$BASE/sources/4"
+
+curl -s -o /dev/null -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"tg"}' "$BASE/hook/gh-e2e"
+wait_for "grep -q 'PROXY http://127.0.0.1:$MOCK_PORT/bot123456:e2e-token/sendMessage' $PROXY_LOG" \
+  || fail "勾了代理的 Telegram 源没有走代理：$(cat "$PROXY_LOG" 2>/dev/null)"
+pass "Telegram 源勾上「通过代理发送」后确实走了代理"
+
+# 死目标那条规则用的是它自己的源 id；Telegram 源占了 4 号，所以往后挪一位。
+echo
 echo "== 失败重试与手动重放 =="
 # 把重试参数调小，好让这段检查在几秒内跑完
 post_form \
@@ -658,7 +778,7 @@ post_form \
   --data-urlencode "name=必然失败的规则" \
   --data-urlencode "enabled=1" \
   --data-urlencode "from_source_ids=1" \
-  --data-urlencode "to_source_ids=4" \
+  --data-urlencode "to_source_ids=5" \
   --data-urlencode "filters=action eq boom" \
   --data-urlencode "body_template=" \
   --data-urlencode "subject_template=" \

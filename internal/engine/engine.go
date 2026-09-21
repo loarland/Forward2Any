@@ -77,6 +77,16 @@ func (e *Engine) clientFor(proxyURL string) (*http.Client, error) {
 	return c, nil
 }
 
+// httpClientFor 返回这次投递要用的客户端。
+// 只有「用途包含发送」的源才认代理勾选：用途改成纯接收之后，即使库里还留着这个标记，
+// 也不该再走代理。邮件（SMTP）不走这里，所以代理配置只会影响 Webhook 和 Telegram。
+func (e *Engine) httpClientFor(out *store.Source, settings *store.Settings) (*http.Client, error) {
+	if !out.UseProxy || !out.CanSend() {
+		return e.client, nil
+	}
+	return e.clientFor(settings.ProxyURL())
+}
+
 func (e *Engine) Start() {
 	e.mu.Lock()
 	if e.running {
@@ -333,18 +343,19 @@ func (e *Engine) attempt(d *store.Delivery) {
 	)
 	switch out.Kind {
 	case "webhook":
-		// 只有「用途包含发送」的源才认这个勾选：用途改成纯接收之后，
-		// 即使库里还留着这个标记，也不该再走代理。
-		proxyURL := ""
-		if out.UseProxy && out.CanSend() {
-			proxyURL = settings.ProxyURL()
-		}
-		client, cerr := e.clientFor(proxyURL)
+		client, cerr := e.httpClientFor(out, settings)
 		if cerr != nil {
 			sendErr = cerr
 			break
 		}
 		code, respBody, sendErr = e.sendWebhook(d, out, client)
+	case "telegram":
+		client, cerr := e.httpClientFor(out, settings)
+		if cerr != nil {
+			sendErr = cerr
+			break
+		}
+		code, respBody, sendErr = e.sendTelegram(d, out, client)
 	case "email":
 		sendErr = e.sendMail(d, out)
 	default:

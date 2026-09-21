@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>源</h1>
-    <div class="sub">接收来源与转发目标，支持 Webhook 与邮件两种类型</div>
+    <div class="sub">接收来源与转发目标，支持 Webhook、邮件与 Telegram 三种类型</div>
   </div>
   <a class="btn primary" href="/sources/new">新建源</a>
 </div>
@@ -20,6 +20,7 @@
       <option value="">全部</option>
       <option value="webhook">Webhook</option>
       <option value="email">邮件</option>
+      <option value="telegram">Telegram</option>
     </select>
   </label>
   <label class="lf-field"><span>用途</span>
@@ -50,7 +51,7 @@
      data-kind="{{.Src.Kind}}"
      data-usage="{{.Src.Usage}}"
      data-enabled="{{if .Src.Enabled}}1{{else}}0{{end}}"
-     data-search="{{.Src.Name}} {{.Src.Slug}} {{.Src.URL}} {{.Src.MailTo}} {{.Src.IMAPUser}} {{.Src.IMAPHost}} {{kindText .Src.Kind}} {{usageText .Src.Usage}}">
+     data-search="{{.Src.Name}} {{.Src.Slug}} {{.Src.URL}} {{.Src.MailTo}} {{.Src.IMAPUser}} {{.Src.IMAPHost}} {{.Src.TgChatID}} {{kindText .Src.Kind}} {{usageText .Src.Usage}}">
 
   <div class="source-head">
     <span class="source-name">{{.Src.Name}}</span>
@@ -97,6 +98,9 @@
     {{end}}
     {{if .Src.IMAPHost}}
     <div class="meta-line"><span class="meta-key">收信</span><span class="mono">{{.Src.IMAPUser}}@{{.Src.IMAPHost}} / {{.Src.IMAPFolder}}</span></div>
+    {{end}}
+    {{if .Src.TgChatID}}
+    <div class="meta-line"><span class="meta-key">Chat ID</span><span class="mono">{{.Src.TgChatID}}{{if .Src.TgThreadID}} · 话题 {{.Src.TgThreadID}}{{end}}</span></div>
     {{end}}
     {{if .Src.IPAllow}}
     <div class="meta-line"><span class="meta-key">IP 白名单</span><span class="mono">{{.Src.IPAllow}}</span></div>

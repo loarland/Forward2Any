@@ -15,9 +15,12 @@
     var recv = usage === 'in' || usage === 'both';
     var send = usage === 'out' || usage === 'both';
 
+    // data-when="<类型>[:recv|send]"。类型可以写多个（逗号分隔）：
+    // 「发送代理」那一块 Webhook 和 Telegram 共用，所以两边都要能放出来。
     document.querySelectorAll('[data-when]').forEach(function (el) {
       var parts = el.getAttribute('data-when').split(':');
-      var kindOk = parts[0] === '*' || parts[0] === kind;
+      var kinds = parts[0].split(',');
+      var kindOk = kinds.indexOf('*') >= 0 || kinds.indexOf(kind) >= 0;
       var useOk = (parts[1] === 'recv' && recv) || (parts[1] === 'send' && send);
       el.hidden = !(kindOk && useOk);
     });

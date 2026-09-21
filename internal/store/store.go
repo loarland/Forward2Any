@@ -110,6 +110,15 @@ var migrations = [][]string{
 	{
 		`ALTER TABLE sources ADD COLUMN use_proxy INTEGER NOT NULL DEFAULT 0`,
 	},
+	// v3：Telegram 发送源。
+	// Chat ID 存字符串：它既可能是数字（群和频道的 id 是负数），也可能是 @channelusername。
+	// 话题 ID 也存字符串，好区分「没填」和「填了 0」，顺便把用户填错的内容原样留着报错。
+	{
+		`ALTER TABLE sources ADD COLUMN tg_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sources ADD COLUMN tg_chat_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sources ADD COLUMN tg_thread_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sources ADD COLUMN tg_endpoint TEXT NOT NULL DEFAULT ''`,
+	},
 }
 
 func Open(dataDir string) (*Store, error) {

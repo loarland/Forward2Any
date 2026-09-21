@@ -632,3 +632,109 @@ func TestMigrateAddsUseProxyToExistingDB(t *testing.T) {
 		t.Error("升级后的库写不进 use_proxy")
 	}
 }
+
+// Telegram 那几个字段要能存能读，包括「话题 ID 留空」和「端点留空」这两种默认状态。
+func TestSourceTelegramRoundTrip(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	src := &Source{
+		Name: "TG", Kind: "telegram", Usage: "out", Enabled: true, Headers: "{}",
+		TgToken: "123456:ABC-DEF", TgChatID: "-1001234567890", TgThreadID: "42",
+		TgEndpoint: "https://api.telegram.org/bot",
+	}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TgToken != src.TgToken || got.TgChatID != src.TgChatID ||
+		got.TgThreadID != src.TgThreadID || got.TgEndpoint != src.TgEndpoint {
+		t.Errorf("Telegram 字段没有原样存住：%+v", got)
+	}
+
+	// 清空是可表达的：话题 ID 和端点都能回到空串
+	got.TgThreadID = ""
+	got.TgEndpoint = ""
+	if err := st.SaveSource(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.TgThreadID != "" || again.TgEndpoint != "" {
+		t.Errorf("清空后没有存住：话题 %q 端点 %q", again.TgThreadID, again.TgEndpoint)
+	}
+}
+
+// 从 v2 升上来的老库（比如已经跑过代理那一版）：Telegram 的列由 v3 的 ALTER 补上，
+// 老数据的字段一个都不能动。
+func TestMigrateAddsTelegramColumnsToExistingDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f2a.db")
+
+	// 手工造一个停在 user_version=2 的库：跑前两版迁移，再塞一行老数据。
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmts := range migrations[:2] {
+		for _, stmt := range stmts {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+		t.Fatal(err)
+	}
+	// v2 的 sources 有 use_proxy，但还没有 tg_* 那几列
+	if _, err := db.Exec(`INSERT INTO sources (name, kind, usage, enabled, url, http_method, headers, use_proxy)
+		VALUES ('老源', 'webhook', 'out', 1, 'http://example.com/v2', 'POST', '{}', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("升级 v2 老库失败: %v", err)
+	}
+	defer st.Close()
+
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatalf("升级后读不出老库的源: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "老源" {
+		t.Fatalf("迁移把老数据弄丢了: %+v", list)
+	}
+	if list[0].TgToken != "" || list[0].TgChatID != "" || list[0].TgEndpoint != "" {
+		t.Errorf("老数据的 tg_* 应当是空的: %+v", list[0])
+	}
+	if !list[0].UseProxy || list[0].URL != "http://example.com/v2" {
+		t.Errorf("v2 的字段被改动了: %+v", list[0])
+	}
+
+	// 补上的列要真能写
+	list[0].Kind = "telegram"
+	list[0].TgToken = "1:x"
+	list[0].TgChatID = "@c"
+	if err := st.SaveSource(list[0]); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.TgToken != "1:x" || again.TgChatID != "@c" {
+		t.Errorf("升级后的库写不进 tg_* 字段: %+v", again)
+	}
+}

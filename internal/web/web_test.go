@@ -1165,3 +1165,244 @@ func TestSourcesPageCurlCopyTargetsExist(t *testing.T) {
 		t.Error("回调地址的复制按钮不见了")
 	}
 }
+
+// ---------- Telegram 发送源 ----------
+
+func tgBase() *store.Source {
+	return &store.Source{
+		Name: "TG", Kind: "telegram", Usage: "out", Enabled: true, Headers: "{}",
+		TgToken: "123456:ABC", TgChatID: "-1001234", TgEndpoint: store.DefaultTgEndpoint,
+	}
+}
+
+func TestValidateTelegramSource(t *testing.T) {
+	if err := validateSourceShape(tgBase()); err != nil {
+		t.Fatalf("基本配置应当合法: %v", err)
+	}
+
+	// 留空端点时自动补上官方地址（老配置或手填一半的情况）
+	empty := tgBase()
+	empty.TgEndpoint = ""
+	if err := validateSourceShape(empty); err != nil {
+		t.Fatalf("端点留空应当补默认值: %v", err)
+	}
+	if empty.TgEndpoint != store.DefaultTgEndpoint {
+		t.Errorf("端点应补成 %q，实际 %q", store.DefaultTgEndpoint, empty.TgEndpoint)
+	}
+
+	// Telegram 只能发，不能收
+	recv := tgBase()
+	recv.Usage = "in"
+	if err := validateSourceShape(recv); err == nil {
+		t.Error("Telegram 用作接收源应当报错")
+	}
+	both := tgBase()
+	both.Usage = "both"
+	if err := validateSourceShape(both); err == nil {
+		t.Error("Telegram 用作「接收 + 发送」应当报错")
+	}
+
+	noToken := tgBase()
+	noToken.TgToken = ""
+	if err := validateSourceShape(noToken); err == nil {
+		t.Error("缺 Bot Token 应当报错")
+	}
+	noChat := tgBase()
+	noChat.TgChatID = ""
+	if err := validateSourceShape(noChat); err == nil {
+		t.Error("缺 Chat ID 应当报错")
+	}
+
+	// 端点会直接拼上 token，所以必须以 /bot 结尾，否则只会换来一个看不懂的 404
+	for _, bad := range []string{"https://api.telegram.org", "not-a-url", "ftp://x/bot", "https://api.telegram.org/bots"} {
+		v := tgBase()
+		v.TgEndpoint = bad
+		if err := validateSourceShape(v); err == nil {
+			t.Errorf("端点 %q 应当报错", bad)
+		}
+	}
+	// 结尾多个斜杠是无害的
+	trailing := tgBase()
+	trailing.TgEndpoint = "https://api.telegram.org/bot/"
+	if err := validateSourceShape(trailing); err != nil {
+		t.Errorf("结尾多一个斜杠不该报错: %v", err)
+	}
+
+	// 话题 ID 要么不填，要么是数字 —— 别等投递时才发现
+	badThread := tgBase()
+	badThread.TgThreadID = "第一话题"
+	if err := validateSourceShape(badThread); err == nil {
+		t.Error("话题 ID 不是数字应当报错")
+	}
+	okThread := tgBase()
+	okThread.TgThreadID = "42"
+	if err := validateSourceShape(okThread); err != nil {
+		t.Errorf("数字话题 ID 应当合法: %v", err)
+	}
+}
+
+// Telegram 源不能接收：既不能出现在规则表单的接收源栏里，也不能是 webhook 那样带回调地址。
+func TestTelegramSourceCannotReceive(t *testing.T) {
+	src := &store.Source{Kind: "telegram", Usage: "both", Enabled: true}
+	if src.CanReceive() {
+		t.Error("Telegram 源永远不该被当成接收源")
+	}
+	if !src.CanSend() {
+		t.Error("用途含发送时 Telegram 源应当能发送")
+	}
+	onlyIn := &store.Source{Kind: "telegram", Usage: "in"}
+	if onlyIn.CanReceive() || onlyIn.CanSend() {
+		t.Error("用途是接收的 Telegram 源两头都不该通")
+	}
+	// 回调地址只给 webhook 生成
+	if got := hookURL("http://x", onlyIn); got != "" {
+		t.Errorf("Telegram 源不该有回调地址，得到 %q", got)
+	}
+}
+
+// 源表单里 Telegram 的参数要能填、能回填；「通过代理发送」只能有一个，
+// 两个面板各放一份会导致 name 提交两次、id 重复（点 label 会点到另一个上）。
+func TestSourceFormTelegramFieldsAndSingleProxySwitch(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := tgBase()
+	src.TgThreadID = "42"
+	src.TgEndpoint = "https://api.telegram.org/bot"
+	src.UseProxy = true
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/sources/"+strconv.FormatInt(src.ID, 10)+"/edit", nil)
+	req.SetPathValue("id", strconv.FormatInt(src.ID, 10))
+	s.handleSourceForm(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("源表单渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`<option value="telegram" selected>`,
+		`name="tg_token"`,
+		`name="tg_chat_id"`,
+		`name="tg_thread_id"`,
+		`name="tg_endpoint"`,
+		`data-when="telegram:send"`,
+		`data-when="telegram:recv"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("源表单里缺少 %s", want)
+		}
+	}
+	// 值要回填（不然改一次别的字段就把 token 弄丢了）
+	for _, want := range []string{`value="123456:ABC"`, `value="-1001234"`, `value="42"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("表单没有回填 %s", want)
+		}
+	}
+
+	if n := strings.Count(body, `name="use_proxy"`); n != 1 {
+		t.Errorf("「通过代理发送」应当只有一个开关，实际 %d 个", n)
+	}
+	if n := strings.Count(body, `id="use_proxy"`); n != 1 {
+		t.Errorf("use_proxy 的 id 应当只有一个（重复会让 label 点到另一个上），实际 %d 个", n)
+	}
+	if !strings.Contains(body, `data-when="webhook,telegram:send"`) {
+		t.Error("代理开关所在的块应当对 Webhook 和 Telegram 都显示")
+	}
+}
+
+// 代理开关对 Telegram 源也要生效（存得上、回填得出来），且用途不含发送时不认这个勾。
+func TestTelegramSourceProxySwitchRoundTrip(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+
+	form := url.Values{
+		"name": {"TG"}, "kind": {"telegram"}, "usage": {"out"}, "enabled": {"1"},
+		"tg_token": {"1:x"}, "tg_chat_id": {"@c"}, "tg_thread_id": {""},
+		"tg_endpoint": {"https://api.telegram.org/bot"}, "use_proxy": {"1"},
+	}
+	r := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	src, err := s.sourceFromForm(r, &store.Source{})
+	if err != nil {
+		t.Fatalf("Telegram 源表单应当解析成功: %v", err)
+	}
+	if !src.UseProxy {
+		t.Error("勾了「通过代理发送」应当被认下来")
+	}
+
+	// 用途不含发送时这个勾不生效（表单上也只有发送时才显示），但库里原来那个值要留着
+	stale := &store.Source{Kind: "telegram", Usage: "out", UseProxy: true}
+	recv := url.Values{"name": {"TG"}, "kind": {"telegram"}, "usage": {"in"}, "tg_token": {"1:x"}, "tg_chat_id": {"@c"}}
+	// 用途是接收时校验会拦下来，这里只关心 UseProxy 有没有被悄悄清掉
+	r2 := httptest.NewRequest("POST", "/sources", strings.NewReader(recv.Encode()))
+	r2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r2.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.sourceFromForm(r2, stale)
+	if !got.UseProxy {
+		t.Error("用途不含发送时不该把库里留着的那一勾清掉")
+	}
+}
+
+// Telegram 源不能接收：即使库里的用途被写成 both（只能来自手工改库或很老的数据），
+// 也绝不能出现在规则表单的接收源栏里 —— 能选中它就意味着配了一条永远收不到消息的规则。
+// 走界面建出来的 Telegram 源用途只能是 out，那时它本来就因为「用途不含接收」被藏掉，
+// 所以下面那句说明文字在真实数据上都是对的。
+func TestRuleFormHidesTelegramFromReceiveColumn(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &store.Source{Name: "钩子", Kind: "webhook", Usage: "in", Enabled: true, Headers: "{}", Slug: "h1"}
+	tg := &store.Source{Name: "TG 目标", Kind: "telegram", Usage: "both", Enabled: true, Headers: "{}",
+		TgToken: "1:x", TgChatID: "1"}
+	for _, src := range []*store.Source{hook, tg} {
+		if err := st.SaveSource(src); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := testServer()
+	s.store = st
+	rec := httptest.NewRecorder()
+	s.renderRuleForm(rec, httptest.NewRequest("GET", "/rules/new", nil), &store.Rule{Enabled: true}, "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("规则表单渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	fromStart := strings.Index(body, `data-picker="from"`)
+	toStart := strings.Index(body, `data-picker="to"`)
+	if fromStart < 0 || toStart < fromStart {
+		t.Fatal("规则表单里没有找到两栏选源列表")
+	}
+	from, to := body[fromStart:toStart], body[toStart:]
+
+	if strings.Contains(from, rowOf("TG 目标")) {
+		t.Error("Telegram 源不该出现在接收源栏里")
+	}
+	if !strings.Contains(from, rowOf("钩子")) {
+		t.Error("接收源栏应当列出 webhook 接收源")
+	}
+	if !strings.Contains(to, rowOf("TG 目标")) {
+		t.Error("目标源栏应当列出 Telegram 源")
+	}
+	if !strings.Contains(from, "另有 1 个源用途不含接收") {
+		t.Error("被藏起来的源要说明一声")
+	}
+}

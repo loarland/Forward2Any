@@ -14,6 +14,7 @@
       <select name="kind">
         <option value="webhook" {{if eq .Src.Kind "webhook"}}selected{{end}}>Webhook</option>
         <option value="email" {{if eq .Src.Kind "email"}}selected{{end}}>邮件</option>
+        <option value="telegram" {{if eq .Src.Kind "telegram"}}selected{{end}}>Telegram</option>
       </select>
     </label>
     <label><span>用途</span>
@@ -123,8 +124,63 @@
     <span>固定附加请求头 <span class="hint">JSON 对象；规则没配请求头模板时用这份</span></span>
     <textarea name="headers" rows="3">{{.Src.Headers}}</textarea>
   </label>
-  {{/* 没配代理时把勾选框禁用掉：勾了也不会生效，不如直接说清楚。
-       用途不含发送时这整块面板本来就是隐藏的，代理自然也就用不上。 */}}
+</div>
+
+<!-- ---------- Telegram 发送 ---------- -->
+{{/* 选了 Telegram 但用途还停在接收时，下面这些字段一个都不会露出来。
+     与其让人对着空页面发愣，不如直接说清楚该改哪一格（没有 JS 时全部面板都可见，也不影响）。 */}}
+<div class="panel" data-when="telegram:recv">
+  <div class="note">
+    Telegram 类型<strong>只能当发送源</strong>：「用途」请选<strong>发送</strong>。
+    选「接收」或「接收 + 发送」都会被拒绝 —— 它没有接收这一侧
+    （Bot API 的更新要主动拉，本项目不做）。
+  </div>
+</div>
+
+{{/* 只发送：Bot API 那头的更新要主动拉，本项目不做接收。
+     所以这一块永远只按「发送」出现，用途选成接收时会被校验挡回去。 */}}
+<div class="panel" data-when="telegram:send">
+  <h2>Telegram 发送（Bot API）</h2>
+  <div class="grid2">
+    <label>
+      <span>Bot Token</span>
+      <input type="password" name="tg_token" value="{{.Src.TgToken}}" autocomplete="new-password"
+        placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+    </label>
+    <label>
+      <span>Chat ID <span class="hint">群和频道的 id 是负数</span></span>
+      <input type="text" name="tg_chat_id" value="{{.Src.TgChatID}}" placeholder="-1001234567890 或 @channelusername">
+    </label>
+  </div>
+  <label>
+    <span>消息话题 ID <span class="hint">可选，对应 Bot API 的 message_thread_id</span></span>
+    <input type="text" name="tg_thread_id" value="{{.Src.TgThreadID}}" placeholder="留空表示发到主频道/主群">
+  </label>
+  <label>
+    <span>请求端点 <span class="hint">自建 Bot API 服务器时才改</span></span>
+    <input type="text" name="tg_endpoint" value="{{.Src.TgEndpoint}}">
+  </label>
+  <div class="note">
+    转发过去的正文会当成<strong>一条文本消息</strong>发出，长度按 Telegram 的规矩最多 4096 个字符
+    （超出会直接判失败，不会截断）。<br>
+    <strong>怎么拿 Chat ID</strong>：把 bot 拉进群（频道里要给它管理员权限），在群里发一条消息，
+    然后浏览器打开 <span class="mono">&lt;请求端点&gt;&lt;Bot Token&gt;/getUpdates</span>，
+    回复里 <span class="mono">result[].message.chat.id</span> 就是；私聊则要先给 bot 发一条消息。
+    频道也可以直接填 <span class="mono">@频道用户名</span>。<br>
+    <strong>话题 ID</strong>：只在论坛群（forum）里想固定发到某个话题时才填，
+    话题链接 <span class="mono">t.me/c/…/&lt;话题ID&gt;</span> 或 <span class="mono">t.me/&lt;群&gt;/&lt;话题ID&gt;</span>
+    里的那个数字就是它。<br>
+    Token 是能操作这个 bot 的凭据，出现在投递日志里的地址不会被记录（出错时会把 Token 抹成
+    <span class="mono">***</span>），但也别把它贴到别处。
+  </div>
+</div>
+
+<!-- ---------- 发送代理 ---------- -->
+{{/* 代理对 Webhook 和 Telegram 是同一件事，所以只留一个勾选框：
+     两个面板各放一个的话，同一个 name 会提交两次、id 也会重复（label 会点到另一个上）。 */}}
+<div class="panel" data-when="webhook,telegram:send">
+  <h2>发送代理</h2>
+  {{/* 没配代理时把勾选框禁用掉：勾了也不会生效，不如直接说清楚。 */}}
   <div class="checkbox-line">
     <input type="checkbox" id="use_proxy" name="use_proxy" value="1"
       {{if .Src.UseProxy}}checked{{end}} {{if not .Proxy}}disabled{{end}}>
@@ -132,14 +188,14 @@
   </div>
   <div class="note">
     {{if .Proxy}}
-    勾上之后，这个源的 Webhook 投递会走<strong>设置 → 网络代理</strong>里配的
+    勾上之后，这个源的投递会走<strong>设置 → 网络代理</strong>里配的
     <span class="mono">{{.Proxy}}</span>；没勾的源照旧直连。
     {{else}}
     还没配置代理：先到<strong>设置 → 网络代理</strong>里填一个，这里才能勾。
     没配代理时勾了也不生效，投递仍然直连。
     {{end}}
     <br>
-    代理只作用于 Webhook 发送，邮件发送（SMTP）不受影响。
+    代理只作用于 Webhook 和 Telegram 发送，邮件发送（SMTP）不受影响。
     用途改成不含发送之后，这个勾会被忽略，改回发送时按原样生效。
   </div>
 </div>

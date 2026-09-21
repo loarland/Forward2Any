@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -62,7 +63,8 @@ func (s *Server) handleSourceForm(w http.ResponseWriter, r *http.Request) {
 		s.renderSourceForm(w, r, &store.Source{
 			Kind: "webhook", Usage: "in", Enabled: true,
 			HTTPMethod: "POST", Headers: "{}", AuthMode: "none",
-			SMTPPort: 587, SMTPTLS: "starttls",
+			TgEndpoint: store.DefaultTgEndpoint,
+			SMTPPort:   587, SMTPTLS: "starttls",
 			IMAPPort: 993, IMAPTLS: true, IMAPFolder: "INBOX", IMAPInterval: 60,
 		}, "")
 		return
@@ -214,14 +216,19 @@ func (s *Server) sourceFromForm(r *http.Request, base *store.Source) (*store.Sou
 	v.AuthSecret = formValue(r, "auth_secret")
 	v.IPAllow = formValue(r, "ip_allow")
 
-	// 「走代理发送」只在 webhook 且用途包含发送时才认（表单上也只有那时才显示）。
+	// 「走代理发送」只在 webhook / Telegram 且用途包含发送时才认（表单上也只有那时才显示）。
 	// 其它情况一律沿用原值：用途改成纯接收不该把这个勾悄悄清掉，
 	// 改回发送时它还在这儿。
-	if v.Kind == "webhook" && v.CanSend() {
+	if (v.Kind == "webhook" || v.Kind == "telegram") && v.CanSend() {
 		v.UseProxy = formBool(r, "use_proxy")
 	} else {
 		v.UseProxy = base.UseProxy
 	}
+
+	v.TgToken = formValue(r, "tg_token")
+	v.TgChatID = formValue(r, "tg_chat_id")
+	v.TgThreadID = formValue(r, "tg_thread_id")
+	v.TgEndpoint = formValue(r, "tg_endpoint")
 
 	v.SMTPHost = formValue(r, "smtp_host")
 	v.SMTPPort = formInt(r, "smtp_port", 587)
@@ -263,8 +270,8 @@ func validateSourceShape(v *store.Source) error {
 	if v.Name == "" {
 		return errors.New("名称不能为空")
 	}
-	if v.Kind != "webhook" && v.Kind != "email" {
-		return errors.New("类型只能是 webhook 或邮件")
+	if v.Kind != "webhook" && v.Kind != "email" && v.Kind != "telegram" {
+		return errors.New("类型只能是 Webhook、邮件或 Telegram")
 	}
 	if v.Usage != "in" && v.Usage != "out" && v.Usage != "both" {
 		return errors.New("用途不合法")
@@ -309,6 +316,37 @@ func validateSourceShape(v *store.Source) error {
 		}
 		if v.SMTPTLS == "" {
 			v.SMTPTLS = "starttls"
+		}
+	}
+
+	// Telegram 只能往外发，所以用途必须是「发送」。
+	// 允许存成接收用途的话，它会出现在规则表单的接收源栏里，但那条路根本走不通。
+	if v.Kind == "telegram" {
+		if v.Usage != "out" {
+			return errors.New("Telegram 类型只能用作发送源，用途请选「发送」")
+		}
+		if v.TgToken == "" {
+			return errors.New("必须填写 Bot Token")
+		}
+		if v.TgChatID == "" {
+			return errors.New("必须填写 Chat ID")
+		}
+		if v.TgEndpoint == "" {
+			v.TgEndpoint = store.DefaultTgEndpoint
+		}
+		// 端点后面会直接拼上 token（官方就是 /bot<token>/sendMessage），
+		// 所以这里必须要求以 /bot 结尾 —— 少了它只会换来一个看不懂的 404。
+		if u, err := url.Parse(v.TgEndpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("请求端点 %q 不合法，应形如 %s", v.TgEndpoint, store.DefaultTgEndpoint)
+		}
+		if !strings.HasSuffix(strings.TrimRight(v.TgEndpoint, "/"), "/bot") {
+			return fmt.Errorf("请求端点要以 /bot 结尾（token 会直接拼在它后面），例如 %s", store.DefaultTgEndpoint)
+		}
+		// 话题 ID 留空表示不指定；填了就必须是数字，别等投递时才发现。
+		if v.TgThreadID != "" {
+			if _, err := strconv.ParseInt(v.TgThreadID, 10, 64); err != nil {
+				return fmt.Errorf("话题 ID %q 不是数字", v.TgThreadID)
+			}
 		}
 	}
 

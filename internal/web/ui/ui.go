@@ -78,6 +78,8 @@ func kindText(k string) string {
 		return "Webhook"
 	case "email":
 		return "邮件"
+	case "telegram":
+		return "Telegram"
 	}
 	return k
 }
