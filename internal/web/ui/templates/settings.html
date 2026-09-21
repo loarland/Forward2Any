@@ -90,8 +90,18 @@
   <h2>管理员账号</h2>
   <div class="grid3">
     <label><span>用户名</span><input type="text" name="admin_user" value="{{.S.AdminUser}}" required></label>
-    <label><span>新密码 <span class="hint">留空表示不修改</span></span><input type="password" name="new_password" autocomplete="new-password"></label>
-    <label><span>确认新密码</span><input type="password" name="confirm_password" autocomplete="new-password"></label>
+    <label><span>新密码 <span class="hint">留空表示不修改</span></span>
+      <span class="pw-group">
+        <input type="password" name="new_password" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
+    </label>
+    <label><span>确认新密码</span>
+      <span class="pw-group">
+        <input type="password" name="confirm_password" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
+    </label>
   </div>
 </div>
 
@@ -110,7 +120,10 @@
     </label>
     <label>
       <span>密钥（Secret Key） <span class="hint">只留在服务端</span></span>
-      <input type="password" name="turnstile_secret" value="{{.S.TurnstileSecret}}" autocomplete="new-password">
+      <span class="pw-group">
+        <input type="password" name="turnstile_secret" value="{{.S.TurnstileSecret}}" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
     </label>
   </div>
   <div class="note">
@@ -230,16 +243,24 @@
           <span class="btn">选择文件</span>
           <span class="file-name" data-file-name>未选择文件</span>
         </label>
-        <button class="danger" type="submit" hx-confirm="导入会用文件内容整体替换现有的全部源与规则，确定继续吗？">导入并替换</button>
+        <button class="danger" type="submit" hx-confirm="导入会用文件内容整体替换现有的全部源与规则，并覆盖文件里带着的设置项，确定继续吗？">导入并替换</button>
       </form>
     </div>
   </div>
   <div class="note">
-    <strong>导出</strong>会把所有源与规则写成一个 JSON 文件，用来备份或换台机器部署。
-    文件里<strong>不含</strong>管理员账号、密码和监听端口，换机器后要重新设一遍。
+    <strong>导出</strong>把一个 JSON 文件写到本地，用来备份或换台机器部署。文件里有两部分：
     <br>
-    <strong>导入是整体替换</strong>，不做合并：文件里没有的源和规则会被删掉。
-    源里的密钥（Webhook 密钥、SMTP / IMAP 密码）会原样导出，这个文件要当敏感文件保管。
+    · 全部源与规则（规则按文件内部的源下标引用源，不含数据库主键）；
+    <br>
+    · 设置里的<strong>回调基址</strong>，以及「投递与日志」的四项参数（重试次数、退避基数、报文上限、日志保留天数）。
+    <br>
+    文件里<strong>不含</strong>管理员账号与密码、监听端口、代理、时区、外观、Turnstile 密钥 ——
+    这些是本机自己的事，换机器后重新设一遍。
+    <br>
+    <strong>导入是整体替换</strong>：文件里没有的源与规则会被删掉，文件里带着的设置项覆盖本机同名项，
+    文件里没带的设置项保持原样。整份文件先校验后落库，任何一处不合法都当作没导入过。
+    <br>
+    源里的密钥（Webhook 密钥、SMTP / IMAP 密码、渠道加签密钥）原样导出，这个文件要当敏感文件保管。
   </div>
 </div>
 {{end}}

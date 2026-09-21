@@ -73,6 +73,37 @@
   border-left: none;
 }
 
+/* 密码框和它后面的「显示 / 隐藏」贴在一起（跟上面那个「复制」一个路子）。
+   外面必须包一层：按钮不能直接当 label 的兄弟，输入框和按钮又要能拉成一样高。
+   Pico 给「label 的直接子 input」加了一点顶距，包了一层之后那条选择器就不生效了，
+   这里按同一个值补回来，不然这一格的输入框会比旁边几格贴得紧。 */
+.pw-group {
+  display: flex;
+  align-items: stretch;
+  margin-top: .25rem;
+}
+.pw-group > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.pw-group > .pw-toggle {
+  flex: 0 0 auto;
+  align-self: stretch;
+  /* width 和 margin 都得写死：登录卡片里那条 .login-card button 把宽度设成了 100%，
+     不盖掉的话按钮会占满一行、把输入框挤成 0 宽。 */
+  width: auto;
+  margin: 0;
+  min-width: 56px;
+  padding: 0 10px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+
 .form-actions {
   display: flex;
   align-items: center;
@@ -606,6 +637,9 @@ pre.code {
 
 html:not(.js) [data-copy],
 html:not(.js) [data-copy-from] { display: none; }
+
+/* 同理：切明文/密文这件事没有 JS 就做不到，按钮就别露出来 */
+html:not(.js) [data-pw-toggle] { display: none; }
 
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row input { flex: 1; background: var(--surface-2); }

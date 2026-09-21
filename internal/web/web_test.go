@@ -6,8 +6,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -2391,5 +2393,466 @@ func TestValidateSettingsTurnstile(t *testing.T) {
 	off := base
 	if err := validateSettings(&off); err != nil {
 		t.Fatalf("关闭时不该报错，实际 %v", err)
+	}
+}
+
+// 密码框后面都得有「显示 / 隐藏」按钮，并且和输入框一起包在 .pw-group 里 ——
+// 少了这个壳，按钮就贴不到输入框右边、也拉不成一样高。
+// 模板层面的静态扫描在 internal/web/ui 里，这里盯的是真正渲染出来的页面。
+func TestPasswordFieldsRenderWithToggle(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+
+	pair := regexp.MustCompile(`(?s)<span class="pw-group">\s*<input[^>]*type="password"[^>]*>\s*` +
+		`<button class="pw-toggle" type="button" data-pw-toggle`)
+	inputs := regexp.MustCompile(`type="password"`)
+
+	for _, page := range []struct {
+		name string
+		path string
+		h    func(http.ResponseWriter, *http.Request)
+	}{
+		{"登录页", "/login", s.handleLoginForm},
+		{"设置页", "/settings", s.handleSettings},
+		{"源表单", "/sources/new", s.handleSourceForm},
+	} {
+		rec := httptest.NewRecorder()
+		page.h(rec, httptest.NewRequest("GET", page.path, nil))
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s 渲染失败：%d", page.name, rec.Code)
+		}
+		nIn := len(inputs.FindAllString(body, -1))
+		if nIn == 0 {
+			t.Errorf("%s 里一个密码框都没有，测试该跟着改", page.name)
+		}
+		if n := len(pair.FindAllString(body, -1)); n != nIn {
+			t.Errorf("%s 渲染出 %d 个密码框，只有 %d 个后面跟着正确的切换按钮", page.name, nIn, n)
+		}
+	}
+
+	// 没有 JS 时按钮必须藏起来：切明文这件事 JS 做不到就等于没做，
+	// 露出来只会是个点了没反应的按钮。
+	app, err := ui.StaticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?s)html:not\(\.js\) \[data-pw-toggle\]\s*\{\s*display:\s*none`).MatchString(string(app)) {
+		t.Error("app.css 里缺少「没有 JS 就藏掉密码切换按钮」这条规则")
+	}
+	// 登录卡片里有一条 `.login-card button{width:100%}`：切换按钮得把 width 收回 auto，
+	// 否则它会占满整行，把同一行的输入框挤成 0 宽。
+	if !regexp.MustCompile(`(?s)\.pw-group > \.pw-toggle\s*\{[^}]*width:\s*auto`).MatchString(string(app)) {
+		t.Error("app.css 的 .pw-group > .pw-toggle 没有把 width 压回 auto，会被登录卡片的 100% 规则带走")
+	}
+	js, err := ui.StaticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "[data-pw-toggle]") {
+		t.Error("app.js 里没有处理密码显示 / 隐藏切换的代码")
+	}
+}
+
+// 导出再导入要能原样还原：源、规则（按下标引用）、以及跟着文件走的设置项。
+// 同时守住「文件里不含主键与时间戳」—— 换台机器导入时它们没有意义。
+func TestExportImportRestoresConfig(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+	if err := st.SaveSettings(&store.Settings{
+		WebPort: 16000, AdminUser: "admin", AdminPassHash: "hash", BaseURL: "http://hooks.example.com",
+		RetryMax: 7, RetryBackoffSeconds: 11, PayloadMaxBytes: 2048, LogRetentionDays: 3,
+		ThemeColor: "default", ThemeMode: "auto", ProxyType: "none", OriginCheck: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true, Slug: "in",
+		HTTPMethod: "POST", Headers: "{}", DefaultBodyTemplate: "{{.Payload.content}}"}
+	if err := st.SaveSource(in); err != nil {
+		t.Fatal(err)
+	}
+	out := &store.Source{Name: "出口", Kind: "webhook", Usage: "out", Enabled: true, URL: "http://127.0.0.1:9/x",
+		HTTPMethod: "POST", Headers: "{}"}
+	if err := st.SaveSource(out); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "转发", Enabled: true, FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID},
+		Filters: []store.Filter{{Path: "title", Op: "exists"}}, BodyTemplate: "{{.Payload.content}}",
+		SubjectTemplate: "主题", HeadersTemplate: `{"X-A":"1"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	export := func() ([]byte, exportFile) {
+		rec := httptest.NewRecorder()
+		s.handleExport(rec, httptest.NewRequest("GET", "/settings/export", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("导出失败：%d", rec.Code)
+		}
+		var ef exportFile
+		if err := json.Unmarshal(rec.Body.Bytes(), &ef); err != nil {
+			t.Fatalf("导出的不是合法 JSON: %v", err)
+		}
+		return rec.Body.Bytes(), ef
+	}
+	raw, ef := export()
+
+	// 设置项跟着文件走
+	if ef.Settings.BaseURL == nil || *ef.Settings.BaseURL != "http://hooks.example.com" ||
+		ef.Settings.RetryMax == nil || *ef.Settings.RetryMax != 7 ||
+		ef.Settings.RetryBackoffSeconds == nil || *ef.Settings.RetryBackoffSeconds != 11 ||
+		ef.Settings.PayloadMaxBytes == nil || *ef.Settings.PayloadMaxBytes != 2048 ||
+		ef.Settings.LogRetentionDays == nil || *ef.Settings.LogRetentionDays != 3 {
+		t.Errorf("导出的设置项不对：%+v", ef.Settings)
+	}
+	// 主键与时间戳不该出现在文件里（源靠 index 被规则引用）
+	for _, key := range []string{`"id"`, `"created_at"`, `"updated_at"`, "admin_pass_hash", `"web_port"`} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Errorf("导出文件里不该出现 %s", key)
+		}
+	}
+	if ef.Rules[0].From[0] != 0 || ef.Rules[0].To[0] != 1 {
+		t.Errorf("规则应当按下标引用源，得到 from=%v to=%v", ef.Rules[0].From, ef.Rules[0].To)
+	}
+
+	// 换掉库里的东西，再从文件导回去
+	if err := st.SaveSettings(&store.Settings{
+		WebPort: 16000, AdminUser: "boss", AdminPassHash: "hash2", BaseURL: "http://localhost:16000",
+		RetryMax: 5, RetryBackoffSeconds: 10, PayloadMaxBytes: 65536, LogRetentionDays: 30,
+		ThemeColor: "jade", ThemeMode: "dark", ProxyType: "socks5", ProxyAddr: "127.0.0.1:1080", OriginCheck: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSource(&store.Source{Name: "临时", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "tmp", HTTPMethod: "POST", Headers: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	importFile(t, s, raw)
+
+	got, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryMax != 7 || got.RetryBackoffSeconds != 11 || got.PayloadMaxBytes != 2048 ||
+		got.LogRetentionDays != 3 || got.BaseURL != "http://hooks.example.com" {
+		t.Errorf("导入没有还原设置项：%+v", got)
+	}
+	// 文件里没有的东西一律不动：管理员、密码、端口、外观、代理
+	if got.AdminUser != "boss" || got.AdminPassHash != "hash2" || got.WebPort != 16000 ||
+		got.ThemeColor != "jade" || got.ProxyType != "socks5" {
+		t.Errorf("导入不该动文件里没有的设置：%+v", got)
+	}
+
+	sources, err := st.ListSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("导入后应当只剩 2 个源，得到 %d", len(sources))
+	}
+	rules, err := st.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("导入后应当只剩 1 条规则，得到 %d", len(rules))
+	}
+	// 规则里的下标要落回正确的源（按名字认，不能靠 id 顺序撞运气）
+	byName := map[string]int64{}
+	for _, src := range sources {
+		byName[src.Name] = src.ID
+	}
+	if len(rules[0].FromSourceIDs) != 1 || rules[0].FromSourceIDs[0] != byName["入口"] {
+		t.Errorf("接收源没有还原：%v（入口=%d）", rules[0].FromSourceIDs, byName["入口"])
+	}
+	if len(rules[0].ToSourceIDs) != 1 || rules[0].ToSourceIDs[0] != byName["出口"] {
+		t.Errorf("目标源没有还原：%v（出口=%d）", rules[0].ToSourceIDs, byName["出口"])
+	}
+	// 规则本身的内容也要回来
+	if rules[0].Name != "转发" || rules[0].HeadersTemplate != `{"X-A":"1"}` ||
+		len(rules[0].Filters) != 1 || rules[0].Filters[0].Op != "exists" {
+		t.Errorf("规则内容没有还原：%+v", rules[0])
+	}
+	if sources[0].DefaultBodyTemplate != "{{.Payload.content}}" {
+		t.Errorf("源上的默认模板没有还原：%q", sources[0].DefaultBodyTemplate)
+	}
+
+	// 再导出一次应当和第一次的内容等价（源顺序、规则引用一致）
+	_, ef2 := export()
+	if ef2.Settings.RetryMax == nil || *ef2.Settings.RetryMax != 7 {
+		t.Errorf("导入后再导出，设置项对不上：%+v", ef2.Settings)
+	}
+	if len(ef2.Sources) != 2 || len(ef2.Rules) != 1 {
+		t.Fatalf("导入后再导出，源/规则数量对不上：%d/%d", len(ef2.Sources), len(ef2.Rules))
+	}
+	if ef2.Rules[0].To[0] != ef.Rules[0].To[0] || ef2.Rules[0].From[0] != ef.Rules[0].From[0] {
+		t.Errorf("导入后再导出，规则引用变了：%v→%v", ef.Rules[0], ef2.Rules[0])
+	}
+}
+
+// importFile 走一遍真实的 multipart 上传路径（跟界面上「选择文件 → 导入」一致）。
+func importFile(t *testing.T, s *Server, content []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "forward2any.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/settings/import", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	s.handleImport(rec, req)
+	return rec
+}
+
+// 一份不合法的配置文件必须整份拒绝，而且不能动库里已有的东西 ——
+// 以前规则不校验、越界下标悄悄丢掉，用户会看到「导入成功」但其实少了一半配置。
+func TestImportRejectsBadConfigWithoutTouchingStore(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+	keep := &store.Source{Name: "原有源", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "keep", HTTPMethod: "POST", Headers: "{}"}
+	if err := st.SaveSource(keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveRule(&store.Rule{Name: "原有规则", Enabled: true,
+		FromSourceIDs: []int64{keep.ID}, ToSourceIDs: []int64{keep.ID}, HeadersTemplate: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 用来拼一份「只有某一处坏掉」的文件
+	base := func() map[string]any {
+		return map[string]any{
+			"version": 1, "exported_at": 1789980000,
+			"settings": map[string]any{"retry_max": 3},
+			"sources": []any{
+				map[string]any{"index": 0, "name": "入口", "kind": "webhook", "usage": "in",
+					"enabled": true, "slug": "in", "http_method": "POST", "headers": "{}"},
+				map[string]any{"index": 1, "name": "出口", "kind": "webhook", "usage": "out",
+					"enabled": true, "url": "http://127.0.0.1:9/x", "http_method": "POST", "headers": "{}"},
+			},
+			"rules": []any{map[string]any{
+				"name": "转发", "enabled": true, "from": []any{0}, "to": []any{1},
+				"filters": []any{}, "headers_template": "{}",
+			}},
+		}
+	}
+	mutate := func(f func(d map[string]any)) []byte {
+		d := base()
+		f(d)
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	setRule := func(d map[string]any, key string, v any) {
+		d["rules"].([]any)[0].(map[string]any)[key] = v
+	}
+
+	cases := []struct {
+		name string
+		what string
+		body []byte
+	}{
+		{"版本不认识", "配置版本", mutate(func(d map[string]any) { d["version"] = 99 })},
+		{"源下标越界", "越界", mutate(func(d map[string]any) {
+			d["sources"].([]any)[1].(map[string]any)["index"] = 5
+		})},
+		{"源下标重复", "两次", mutate(func(d map[string]any) {
+			d["sources"].([]any)[1].(map[string]any)["index"] = 0
+		})},
+		{"源下标有洞", "越界", mutate(func(d map[string]any) {
+			// 第二个源的下标写成 2：文件里只有两个源时，下标 1 就缺位了
+			d["sources"].([]any)[1].(map[string]any)["index"] = 2
+			setRule(d, "to", []any{2})
+		})},
+		{"规则引用越界", "不存在的源下标", mutate(func(d map[string]any) {
+			setRule(d, "to", []any{7})
+		})},
+		{"规则没有名字", "规则名称不能为空", mutate(func(d map[string]any) {
+			setRule(d, "name", "  ")
+		})},
+		{"模板语法错", "模板", mutate(func(d map[string]any) {
+			setRule(d, "body_template", "{{.Payload.content")
+		})},
+		{"请求头不是 JSON", "请求头", mutate(func(d map[string]any) {
+			setRule(d, "headers_template", "not json")
+		})},
+		{"过滤器操作符不认识", "操作符", mutate(func(d map[string]any) {
+			setRule(d, "filters", []any{map[string]any{"path": "title", "op": "startswith", "value": "x"}})
+		})},
+		{"过滤器少了值", "需要给出值", mutate(func(d map[string]any) {
+			setRule(d, "filters", []any{map[string]any{"path": "title", "op": "eq"}})
+		})},
+		{"设置项不合法", "最大重试次数", mutate(func(d map[string]any) {
+			d["settings"] = map[string]any{"retry_max": 999}
+		})},
+		{"回调基址不合法", "回调基址", mutate(func(d map[string]any) {
+			d["settings"] = map[string]any{"base_url": "hooks.example.com"}
+		})},
+		{"不是 JSON", "不是合法 JSON", []byte("{oops")},
+	}
+	for _, tc := range cases {
+		rec := importFile(t, s, tc.body)
+		if rec.Code == http.StatusSeeOther {
+			t.Errorf("%s：坏配置被当成导入成功了", tc.name)
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), tc.what) {
+			t.Errorf("%s：提示里没有说明原因（想看到 %q）", tc.name, tc.what)
+		}
+		// 库里必须还是原来那一套
+		sources, err := st.ListSources()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sources) != 1 || sources[0].Slug != "keep" {
+			t.Fatalf("%s：被拒绝的导入动了库里的源：%+v", tc.name, sources)
+		}
+		rules, err := st.ListRules()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rules) != 1 || rules[0].Name != "原有规则" {
+			t.Fatalf("%s：被拒绝的导入动了库里的规则：%+v", tc.name, rules)
+		}
+		got, err := st.Settings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.RetryMax == 3 {
+			t.Fatalf("%s：被拒绝的导入写进了设置", tc.name)
+		}
+	}
+
+	// 同一份文件把坏的地方改好就该成功
+	rec := importFile(t, s, mutate(func(d map[string]any) {}))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("合法配置应当导入成功：%d %s", rec.Code, rec.Body.String())
+	}
+	got, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryMax != 3 {
+		t.Errorf("合法导入没有写进设置项：RetryMax=%d", got.RetryMax)
+	}
+}
+
+// 删掉最后一个源之后，规则会被摘成两边为空、留在库里等着改。
+// 这种规则导出再导入时不能被拒 —— 否则用户拿着自己的备份反而恢复不了。
+func TestImportAcceptsRuleLeftWithoutSources(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "in", HTTPMethod: "POST", Headers: "{}"}
+	if err := st.SaveSource(in); err != nil {
+		t.Fatal(err)
+	}
+	rule := &store.Rule{Name: "等着改的规则", Enabled: true, HeadersTemplate: "{}",
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{in.ID}}
+	if err := st.SaveRule(rule); err != nil {
+		t.Fatal(err)
+	}
+	// 删掉这个源：规则被摘空，但没有被删掉
+	if err := st.DeleteSource(in.ID); err != nil {
+		t.Fatal(err)
+	}
+	left, err := st.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || len(left[0].FromSourceIDs) != 0 || len(left[0].ToSourceIDs) != 0 {
+		t.Fatalf("删源后应当留下一条两边为空的规则，实际 %+v", left)
+	}
+
+	// 导出这份「空规则」配置，再导回来
+	rec := httptest.NewRecorder()
+	s.handleExport(rec, httptest.NewRequest("GET", "/settings/export", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("导出失败：%d", rec.Code)
+	}
+	if got := importFile(t, s, rec.Body.Bytes()); got.Code != http.StatusSeeOther {
+		t.Fatalf("空规则应当能导入（它是库里合法存在的状态），实际 %d %s", got.Code, got.Body.String())
+	}
+	rules, err := st.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].Name != "等着改的规则" {
+		t.Errorf("导入后规则对不上：%+v", rules)
+	}
+}
+
+// 文件的源数组顺序被手工调乱时，规则仍要落在原来那个源上（按下标就位，不看数组顺序）。
+func TestImportPlacesSourcesByIndex(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+
+	body := `{"version":1,"exported_at":1,
+	  "sources":[
+	    {"index":1,"name":"出口","kind":"webhook","usage":"out","enabled":true,"url":"http://127.0.0.1:9/x","http_method":"POST","headers":"{}"},
+	    {"index":0,"name":"入口","kind":"webhook","usage":"in","enabled":true,"slug":"in","http_method":"POST","headers":"{}"}
+	  ],
+	  "rules":[{"name":"转发","enabled":true,"from":[0],"to":[1],"filters":[],"headers_template":"{}"}]}`
+	if rec := importFile(t, s, []byte(body)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("导入失败：%d %s", rec.Code, rec.Body.String())
+	}
+
+	sources, err := st.ListSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]int64{}
+	for _, src := range sources {
+		byName[src.Name] = src.ID
+	}
+	rules, err := st.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("应当有 1 条规则，得到 %d", len(rules))
+	}
+	if rules[0].FromSourceIDs[0] != byName["入口"] {
+		t.Errorf("接收源指错了：%v（入口=%d）", rules[0].FromSourceIDs, byName["入口"])
+	}
+	if rules[0].ToSourceIDs[0] != byName["出口"] {
+		t.Errorf("目标源指错了：%v（出口=%d）", rules[0].ToSourceIDs, byName["出口"])
 	}
 }

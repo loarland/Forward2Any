@@ -53,7 +53,10 @@
     </label>
     <label data-auth-field>
       <span>密钥 <span class="hint" data-auth-secret-hint>两边约定一致即可</span></span>
-      <input type="password" name="auth_secret" value="{{.Src.AuthSecret}}" autocomplete="new-password">
+      <span class="pw-group">
+        <input type="password" name="auth_secret" value="{{.Src.AuthSecret}}" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
     </label>
   </div>
 
@@ -210,7 +213,10 @@
   <h2>渠道参数</h2>
   <label data-when="dingtalk,feishu:send">
     <span>加签密钥 <span class="hint">可选；机器人开了「加签 / 签名校验」时必填</span></span>
-    <input type="password" name="channel_secret" value="{{.Src.ChannelSecret}}" autocomplete="new-password">
+    <span class="pw-group">
+      <input type="password" name="channel_secret" value="{{.Src.ChannelSecret}}" autocomplete="new-password">
+      {{template "pw-toggle"}}
+    </span>
   </label>
   <label data-when="onebot,bark:send">
     <span>目标 ID / 分组名
@@ -272,8 +278,11 @@
   <div class="grid2">
     <label>
       <span>Bot Token</span>
-      <input type="password" name="tg_token" value="{{.Src.TgToken}}" autocomplete="new-password"
-        placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+      <span class="pw-group">
+        <input type="password" name="tg_token" value="{{.Src.TgToken}}" autocomplete="new-password"
+          placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+        {{template "pw-toggle"}}
+      </span>
     </label>
     <label>
       <span>Chat ID <span class="hint">群和频道的 id 是负数</span></span>
@@ -343,7 +352,12 @@
   </div>
   <div class="grid3">
     <label><span>用户名</span><input type="text" name="imap_user" value="{{.Src.IMAPUser}}" autocomplete="off"></label>
-    <label><span>密码 / 授权码</span><input type="password" name="imap_pass" value="{{.Src.IMAPPass}}" autocomplete="new-password"></label>
+    <label><span>密码 / 授权码</span>
+      <span class="pw-group">
+        <input type="password" name="imap_pass" value="{{.Src.IMAPPass}}" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
+    </label>
     <label><span>轮询间隔（秒）</span><input type="number" name="imap_interval" value="{{.Src.IMAPInterval}}" min="10"></label>
   </div>
   <label><span>邮箱文件夹</span><input type="text" name="imap_folder" value="{{.Src.IMAPFolder}}" placeholder="INBOX"></label>
@@ -371,7 +385,12 @@
   </div>
   <div class="grid2">
     <label><span>用户名 <span class="hint">留空表示不认证</span></span><input type="text" name="smtp_user" value="{{.Src.SMTPUser}}" autocomplete="off"></label>
-    <label><span>密码 / 授权码</span><input type="password" name="smtp_pass" value="{{.Src.SMTPPass}}" autocomplete="new-password"></label>
+    <label><span>密码 / 授权码</span>
+      <span class="pw-group">
+        <input type="password" name="smtp_pass" value="{{.Src.SMTPPass}}" autocomplete="new-password">
+        {{template "pw-toggle"}}
+      </span>
+    </label>
   </div>
   <div class="grid2">
     <label><span>发件人</span><input type="text" name="mail_from" value="{{.Src.MailFrom}}" placeholder="bot@example.com"></label>

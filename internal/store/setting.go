@@ -242,14 +242,23 @@ func (s *Store) SetSettings(kv map[string]string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := setSettings(tx, kv); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// setSettings 是键值写入的实现，跟着调用方的事务走 ——
+// 配置导入要把设置和源、规则写在同一个事务里，不能各写各的。
+func setSettings(db execer, kv map[string]string) error {
 	for k, v := range kv {
-		if _, err := tx.Exec(
+		if _, err := db.Exec(
 			`INSERT INTO settings(key, value) VALUES(?, ?)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
 			return fmt.Errorf("写入设置 %s: %w", k, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) SetSetting(key, value string) error {

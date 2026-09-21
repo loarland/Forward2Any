@@ -95,3 +95,12 @@
 </body>
 </html>
 {{end}}
+
+{{/* 密码框（input type=password）后面都跟这个按钮：明文 / 密文之间切换。
+
+     结构是 label > span.pw-group > input + 本按钮。多包一层 span 是为了让两者
+     在同一个 flex 容器里 —— 输入框要削掉右边圆角、按钮要拉成和输入框一样高，
+     直接放在 label 下做不到。没有 JS 时这个按钮不显示（app.css 里 html:not(.js) 那条）。
+
+     app.js 认 data-pw-toggle，切换的是它前一个兄弟节点的 type 与自己的文字。 */}}
+{{define "pw-toggle"}}<button class="pw-toggle" type="button" data-pw-toggle aria-pressed="false">显示</button>{{end}}

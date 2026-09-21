@@ -275,16 +275,30 @@ func validateProxy(kind, addr string) error {
 
 const configVersion = 1
 
-// exportFile 刻意不含管理员账号与监听端口：那是本机部署的事，不该跟着配置走。
+// exportFile 刻意不含管理员账号与密码、监听端口、代理、时区、外观和 Turnstile 密钥：
+// 那是本机部署的事，不该跟着配置走。设置里只有下面这几项跟着文件走。
 type exportFile struct {
 	Version    int            `json:"version"`
 	ExportedAt int64          `json:"exported_at"`
-	Settings   map[string]any `json:"settings"`
+	Settings   exportSettings `json:"settings"`
 	Sources    []exportSource `json:"sources"`
 	Rules      []exportRule   `json:"rules"`
 }
 
+// exportSettings 是跟着配置文件走的那几项设置。
+//
+// 用指针是为了区分「文件里没写」和「写了个 0」：导入只覆盖文件里确实带着的项，
+// 手工删掉一项或老文件里没有的项，不会被压成零值。
+type exportSettings struct {
+	BaseURL             *string `json:"base_url,omitempty"`
+	RetryMax            *int    `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
+	PayloadMaxBytes     *int    `json:"payload_max_bytes,omitempty"`
+	LogRetentionDays    *int    `json:"log_retention_days,omitempty"`
+}
+
 // exportSource 带一个下标，规则通过下标引用源，于是文件里不含数据库主键。
+// 源自身的主键和时间戳导出前会清零（见 handleExport），不再出现在文件里。
 type exportSource struct {
 	Index int `json:"index"`
 	*store.Source
@@ -322,17 +336,23 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	ef := exportFile{
 		Version:    configVersion,
 		ExportedAt: time.Now().Unix(),
-		Settings: map[string]any{
-			"base_url":              settings.BaseURL,
-			"retry_max":             settings.RetryMax,
-			"retry_backoff_seconds": settings.RetryBackoffSeconds,
-			"payload_max_bytes":     settings.PayloadMaxBytes,
-			"log_retention_days":    settings.LogRetentionDays,
+		Settings: exportSettings{
+			BaseURL:             &settings.BaseURL,
+			RetryMax:            &settings.RetryMax,
+			RetryBackoffSeconds: &settings.RetryBackoffSeconds,
+			PayloadMaxBytes:     &settings.PayloadMaxBytes,
+			LogRetentionDays:    &settings.LogRetentionDays,
 		},
 	}
 	for i, src := range sources {
 		idx[src.ID] = i
-		ef.Sources = append(ef.Sources, exportSource{Index: i, Source: src})
+		// 拷一份再清掉主键与时间戳：文件是给别的机器用的，这几个值带过去没有意义
+		//（导入时一律重新生成），留在文件里只会让人以为要手工对齐。
+		exported := *src
+		exported.ID = 0
+		exported.CreatedAt = 0
+		exported.UpdatedAt = 0
+		ef.Sources = append(ef.Sources, exportSource{Index: i, Source: &exported})
 	}
 	for _, rule := range rules {
 		er := exportRule{
@@ -357,8 +377,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Disposition",
-		fmt.Sprintf(`attachment; filename="forward2any-%s.json"`, time.Now().Format("20060102-150405")))
+	// 文件名里的时间戳按设置里选的时区来，跟页面上看到的时间一致。
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="forward2any-%s.json"`,
+		time.Now().In(settings.Location()).Format("20060102-150405")))
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(ef); err != nil {
@@ -388,52 +409,153 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sources := make([]*store.Source, 0, len(ef.Sources))
+	// 先把三样东西都验完再落库：任何一处不合法都当作没导入过。
+	sources, err := importSources(ef.Sources)
+	if err != nil {
+		s.renderSettings(w, r, err.Error(), "")
+		return
+	}
+	rules, err := importRules(ef.Rules, len(sources))
+	if err != nil {
+		s.renderSettings(w, r, err.Error(), "")
+		return
+	}
+	kv, err := s.importSettings(ef.Settings)
+	if err != nil {
+		s.renderSettings(w, r, err.Error(), "")
+		return
+	}
+
+	if err := s.store.ReplaceConfig(sources, rules, kv); err != nil {
+		s.fail(w, "导入失败", err)
+		return
+	}
+	s.reloadMail()
+	// 回调基址可能跟着文件换了，跨站校验的允许列表要重新取一遍。
+	if len(kv) > 0 {
+		s.refreshOriginPolicy()
+	}
+	s.log.Info("导入配置完成", "源", len(sources), "规则", len(rules), "设置", len(kv))
+	http.Redirect(w, r, "/settings?ok=imported", http.StatusSeeOther)
+}
+
+// importSources 把文件里的源按下标摆回原位。
+//
+// 规则里的 from/to 存的就是这些下标（不是数组顺序），所以必须按 index 就位 ——
+// 手工调整过顺序的文件才不会把规则指到别的源上。
+// 空位、重复下标、越界下标都不放过：静默跳过会让规则少一个源，比当场拒绝更难查。
+// 「正好 0 到 n-1 各一次」是这份文件能自洽的前提：既保证每个下标都指得到源，
+// 也保证规则不会指向一个被丢掉的源。
+func importSources(list []exportSource) ([]*store.Source, error) {
+	out := make([]*store.Source, len(list))
 	seenSlug := map[string]bool{}
-	for _, es := range ef.Sources {
+	for _, es := range list {
+		if es.Index < 0 || es.Index >= len(list) {
+			return nil, fmt.Errorf("源的下标 %d 越界：文件里一共 %d 个源，下标必须正好是 0 到 %d 各一次",
+				es.Index, len(list), len(list)-1)
+		}
 		if es.Source == nil {
-			continue
+			return nil, fmt.Errorf("下标为 %d 的源没有内容", es.Index)
+		}
+		if out[es.Index] != nil {
+			return nil, fmt.Errorf("源的下标 %d 出现了两次：文件里一共 %d 个源，下标必须正好是 0 到 %d 各一次",
+				es.Index, len(list), len(list)-1)
 		}
 		src := *es.Source
 		src.ID = 0
 		// 导入是整体替换，所以只做「形态」校验，不跟库里现有数据比 slug。
 		if err := validateSourceShape(&src); err != nil {
-			s.renderSettings(w, r, fmt.Sprintf("第 %d 个源不合法: %v", es.Index, err), "")
-			return
+			return nil, fmt.Errorf("下标为 %d 的源（%s）不合法: %v", es.Index, src.Name, err)
 		}
 		if src.Slug != "" {
 			if seenSlug[src.Slug] {
-				s.renderSettings(w, r, fmt.Sprintf("配置文件里有重复的路径标识 %q", src.Slug), "")
-				return
+				return nil, fmt.Errorf("配置文件里有重复的路径标识 %q", src.Slug)
 			}
 			seenSlug[src.Slug] = true
 		}
-		sources = append(sources, &src)
+		out[es.Index] = &src
 	}
+	return out, nil
+}
 
-	rules := make([]*store.Rule, 0, len(ef.Rules))
-	for _, er := range ef.Rules {
-		hdrs := strings.TrimSpace(er.HeadersTemplate)
-		if hdrs == "" {
-			hdrs = "{}"
+// importRules 校验文件里的规则，并把 from/to 的下标核一遍。
+//
+// 校验用的是界面保存时的同一套（validateRule）：手工改过的配置文件不该能塞进
+// 一条界面上根本存不下的规则 —— 那种规则要么永远不触发，要么到投递时才炸。
+func importRules(list []exportRule, nSources int) ([]*store.Rule, error) {
+	out := make([]*store.Rule, 0, len(list))
+	for i, er := range list {
+		from, err := importRefs(er.From, nSources)
+		if err != nil {
+			return nil, fmt.Errorf("第 %d 条规则（%s）的接收源 %v", i+1, er.Name, err)
 		}
-		rules = append(rules, &store.Rule{
-			Name:            er.Name,
+		to, err := importRefs(er.To, nSources)
+		if err != nil {
+			return nil, fmt.Errorf("第 %d 条规则（%s）的目标源 %v", i+1, er.Name, err)
+		}
+		rule := &store.Rule{
+			Name:            strings.TrimSpace(er.Name),
 			Enabled:         er.Enabled,
-			FromSourceIDs:   er.From,
-			ToSourceIDs:     er.To,
+			FromSourceIDs:   from,
+			ToSourceIDs:     to,
 			Filters:         er.Filters,
-			BodyTemplate:    er.BodyTemplate,
-			SubjectTemplate: er.SubjectTemplate,
-			HeadersTemplate: hdrs,
-		})
+			BodyTemplate:    strings.TrimSpace(er.BodyTemplate),
+			SubjectTemplate: strings.TrimSpace(er.SubjectTemplate),
+			HeadersTemplate: strings.TrimSpace(er.HeadersTemplate),
+		}
+		if err := validateRule(rule); err != nil {
+			return nil, fmt.Errorf("第 %d 条规则不合法: %v", i+1, err)
+		}
+		out = append(out, rule)
 	}
+	return out, nil
+}
 
-	if err := s.store.ReplaceConfig(sources, rules); err != nil {
-		s.fail(w, "导入失败", err)
-		return
+// importRefs 检查一条规则里引用的源下标，越界就报错（不再像以前那样悄悄丢掉）。
+func importRefs(idx []int64, nSources int) ([]int64, error) {
+	out := make([]int64, 0, len(idx))
+	for _, i := range idx {
+		if i < 0 || int(i) >= nSources {
+			return nil, fmt.Errorf("引用了不存在的源下标 %d（文件里有 %d 个源）", i, nSources)
+		}
+		out = append(out, i)
 	}
-	s.reloadMail()
-	s.log.Info("导入配置完成", "源", len(sources), "规则", len(rules))
-	http.Redirect(w, r, "/settings?ok=imported", http.StatusSeeOther)
+	return out, nil
+}
+
+// importSettings 校验文件里的设置项，并返回要落库的键值。
+//
+// 只认文件里确实带着的项：导入文件允许只带一部分设置（老文件、手工删过的文件），
+// 少一项不该把本机的配置清成零值 —— 没带的项就是不覆盖。
+//
+// 校验拿的是一份「默认值 + 文件里这几项」，而不是本机现有设置：
+// 要拦的只是文件带来的值（比如回调基址没写协议、重试次数是 0），
+// 本机别的字段哪怕是历史遗留的怪值，也不该连累这次导入。
+func (s *Server) importSettings(es exportSettings) (map[string]string, error) {
+	probe := store.DefaultSettings()
+	kv := map[string]string{}
+	if es.BaseURL != nil {
+		probe.BaseURL = strings.TrimRight(strings.TrimSpace(*es.BaseURL), "/")
+		kv[store.KeyBaseURL] = probe.BaseURL
+	}
+	if es.RetryMax != nil {
+		probe.RetryMax = *es.RetryMax
+		kv[store.KeyRetryMax] = strconv.Itoa(probe.RetryMax)
+	}
+	if es.RetryBackoffSeconds != nil {
+		probe.RetryBackoffSeconds = *es.RetryBackoffSeconds
+		kv[store.KeyRetryBackoffSeconds] = strconv.Itoa(probe.RetryBackoffSeconds)
+	}
+	if es.PayloadMaxBytes != nil {
+		probe.PayloadMaxBytes = *es.PayloadMaxBytes
+		kv[store.KeyPayloadMaxBytes] = strconv.Itoa(probe.PayloadMaxBytes)
+	}
+	if es.LogRetentionDays != nil {
+		probe.LogRetentionDays = *es.LogRetentionDays
+		kv[store.KeyLogRetentionDays] = strconv.Itoa(probe.LogRetentionDays)
+	}
+	if err := validateSettings(probe); err != nil {
+		return nil, fmt.Errorf("配置文件里的设置项不合法: %v", err)
+	}
+	return kv, nil
 }

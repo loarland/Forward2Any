@@ -559,6 +559,35 @@
     }
   });
 
+  // 10) 密码框后面的「显示 / 隐藏」。
+  //     服务端已经把按钮渲染好了（模板里的 pw-toggle），这里只做切换：
+  //     把前一个兄弟节点的 type 在 password / text 之间换一下，顺便改按钮文字。
+  //     按钮藏在 label 里的外层 span 里，前一个兄弟节点就是那个 input。
+  //     换成明文后 type 不再是 password，所以还要挂个标记，第二次点击才找得回来。
+  document.addEventListener('click', function (e) {
+    if (!e.target || !e.target.closest) {
+      return;
+    }
+    var btn = e.target.closest('[data-pw-toggle]');
+    if (!btn) {
+      return;
+    }
+    var field = btn.parentNode;
+    var input = field.querySelector('input[type=password], input[data-pw-shown]');
+    if (!input) {
+      return;
+    }
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    if (show) {
+      input.setAttribute('data-pw-shown', '');
+    } else {
+      input.removeAttribute('data-pw-shown');
+    }
+    btn.textContent = show ? '隐藏' : '显示';
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+  });
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

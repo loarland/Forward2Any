@@ -4,13 +4,15 @@ import (
 	"fmt"
 )
 
-// ReplaceConfig 用导入的配置整体替换现有的源与规则。
+// ReplaceConfig 用导入的配置整体替换现有的源与规则，并写入随文件带来的设置项。
 //
 // rules 里的 FromSourceIDs / ToSourceIDs 放的是 sources 切片的下标（不是数据库 id），
 // 导入时重新映射成新生成的 id —— 这样导出文件里不含内部主键，换机器也能用。
 //
-// 整体放在一个事务里：中途失败就当作没导入过，不会留下半套配置。
-func (s *Store) ReplaceConfig(sources []*Source, rules []*Rule) error {
+// settings 放的是已经确定要覆盖的键值（可以为空，表示文件里没带设置）。
+// 三者放在一个事务里：中途失败就当作没导入过，不会留下半套配置，
+// 也不会出现「源换了、设置没换」这种半截状态。
+func (s *Store) ReplaceConfig(sources []*Source, rules []*Rule, settings map[string]string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("开始导入事务: %w", err)
@@ -42,10 +44,17 @@ func (s *Store) ReplaceConfig(sources []*Source, rules []*Rule) error {
 		}
 	}
 
+	if err := setSettings(tx, settings); err != nil {
+		return fmt.Errorf("导入设置: %w", err)
+	}
+
 	return tx.Commit()
 }
 
 // remapIDs 把导出文件里的下标换成真实的源 id，越界的直接丢掉。
+//
+// 越界本该在 web 层就被挡下来（导入前逐个核对下标），这里的丢弃只是最后一道兜底：
+// 真漏到这里，规则会少一个源，但不会指向一个不存在的 id。
 func remapIDs(idx []int64, newIDs []int64) []int64 {
 	out := make([]int64, 0, len(idx))
 	for _, i := range idx {

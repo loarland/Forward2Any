@@ -325,14 +325,29 @@ func (s *Server) ruleFromForm(r *http.Request) (*store.Rule, error) {
 	}
 	rule.Filters = filters
 
-	if rule.Name == "" {
-		return rule, errors.New("规则名称不能为空")
-	}
+	// 「至少各选一个源」是表单自己的要求（下拉里没选就提交不了）。
+	// 不放进 validateRule 是因为库里允许存在两边为空的规则：删掉最后一个源之后，
+	// 那条规则会被摘成空的留在库里等着改，导出再导入时不该因此被拒。
 	if len(rule.FromSourceIDs) == 0 {
 		return rule, errors.New("至少要选一个接收源")
 	}
 	if len(rule.ToSourceIDs) == 0 {
 		return rule, errors.New("至少要选一个目标源")
+	}
+	if err := validateRule(rule); err != nil {
+		return rule, err
+	}
+	return rule, nil
+}
+
+// validateRule 是规则本身的合法性检查，表单保存和配置导入走同一套 ——
+// 手工改过的配置文件不该能塞进一条界面上根本存不下的规则
+// （模板语法、请求头 JSON、过滤条件这些要等到真投递时才炸的东西）。
+//
+// 会就地补上默认值（空的请求头模板当成 "{}"），跟表单保存的行为一致。
+func validateRule(rule *store.Rule) error {
+	if strings.TrimSpace(rule.Name) == "" {
+		return errors.New("规则名称不能为空")
 	}
 	if strings.TrimSpace(rule.HeadersTemplate) == "" {
 		rule.HeadersTemplate = "{}"
@@ -340,15 +355,28 @@ func (s *Server) ruleFromForm(r *http.Request) (*store.Rule, error) {
 	// 模板问题在保存时就报出来，别等到真来了请求才发现。
 	// 注意这里只校验语法，不拿假 payload 去执行 —— 见 engine.ValidateTemplate 的说明。
 	if err := engine.ValidateTemplate("报文", rule.BodyTemplate); err != nil {
-		return rule, err
+		return err
 	}
 	if err := engine.ValidateTemplate("主题", rule.SubjectTemplate); err != nil {
-		return rule, err
+		return err
 	}
 	if err := engine.ValidateHeaderTemplates(rule.HeadersTemplate); err != nil {
-		return rule, err
+		return err
 	}
-	return rule, nil
+	// 过滤条件从表单进来时已经被 ParseFilters 查过一遍；从配置文件进来的是
+	// 结构化数据，没有那道关卡，所以在这里统一核一遍。
+	for i, f := range rule.Filters {
+		if strings.TrimSpace(f.Path) == "" {
+			return fmt.Errorf("过滤条件第 %d 条没有路径", i+1)
+		}
+		if !validFilterOps[f.Op] {
+			return fmt.Errorf("过滤条件第 %d 条的操作符 %q 不认识", i+1, f.Op)
+		}
+		if f.Op != "exists" && f.Op != "not_exists" && f.Value == nil {
+			return fmt.Errorf("过滤条件第 %d 条的 %q 操作符需要给出值", i+1, f.Op)
+		}
+	}
+	return nil
 }
 
 func idSet(ids []int64) map[int64]bool {

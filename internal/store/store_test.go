@@ -165,8 +165,16 @@ func TestReplaceConfigRemapsSourceIndices(t *testing.T) {
 		{Name: "新规则", Enabled: true, FromSourceIDs: []int64{0}, ToSourceIDs: []int64{1}},
 		{Name: "越界引用", Enabled: true, FromSourceIDs: []int64{0}, ToSourceIDs: []int64{9}},
 	}
-	if err := st.ReplaceConfig(sources, rules); err != nil {
+	if err := st.ReplaceConfig(sources, rules, map[string]string{KeyRetryMax: "42"}); err != nil {
 		t.Fatal(err)
+	}
+	// 设置跟源、规则在同一个事务里落库
+	after, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RetryMax != 42 {
+		t.Errorf("导入时带的设置项没有写进去，RetryMax=%d", after.RetryMax)
 	}
 
 	got, err := st.ListSources()

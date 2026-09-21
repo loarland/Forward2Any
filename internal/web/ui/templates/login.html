@@ -7,7 +7,12 @@
   {{if .LoginError}}<div class="alert err">{{.LoginError}}</div>{{end}}
   <form method="post" action="/login">
     <label><span>用户名</span><input type="text" name="username" autocomplete="username" autofocus required></label>
-    <label><span>密码</span><input type="password" name="password" autocomplete="current-password" required></label>
+    <label><span>密码</span>
+      <span class="pw-group">
+        <input type="password" name="password" autocomplete="current-password" required>
+        {{template "pw-toggle"}}
+      </span>
+    </label>
     {{/* 控件自己会往表单里塞一个 cf-turnstile-response 隐藏域，服务端拿它去 siteverify 校验。
          只有设置里开了才加载脚本 —— 关着的时候页面不产生任何外部请求。 */}}
     {{if .Turnstile}}

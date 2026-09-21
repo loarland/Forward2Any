@@ -246,6 +246,29 @@ for page in / /sources /rules /deliveries /settings /deliveries/1; do
 done
 pass "概览 / 源 / 规则 / 投递日志 / 详情 / 设置 全部正常渲染"
 
+# 密码框后面的「显示 / 隐藏」按钮：服务端渲染的每个密码框都要跟一个，
+# 没有 JS 时靠 CSS 藏起来（切明文这件事 JS 做不到，露出来就是个死按钮）。
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/pw-settings.html"
+curl -fsS "$BASE/login" > "$WORK/pw-login.html"
+curl -fsS -b "$JAR" "$BASE/sources/new" > "$WORK/pw-source.html"
+python3 -c "
+import re, sys
+total = 0
+for name in ('$WORK/pw-login.html', '$WORK/pw-settings.html', '$WORK/pw-source.html'):
+    html = open(name, encoding='utf-8').read()
+    inputs = len(re.findall(r'type=\"password\"', html))
+    toggles = len(re.findall(r'data-pw-toggle', html))
+    if inputs == 0 or inputs != toggles:
+        sys.exit('%s：%d 个密码框，%d 个切换按钮' % (name, inputs, toggles))
+    total += inputs
+print(total)
+" > "$WORK/pw-count.txt" || fail "密码框后面的显示 / 隐藏按钮数量对不上"
+curl -fsS "$BASE/static/app.css" > "$WORK/pw-app.css"
+grep -q 'html:not(.js) \[data-pw-toggle\]' "$WORK/pw-app.css" || fail "没有 JS 时应当把切换按钮藏起来"
+curl -fsS "$BASE/static/app.js" > "$WORK/pw-app.js"
+grep -q 'data-pw-toggle' "$WORK/pw-app.js" || fail "app.js 里没有切换明文的逻辑"
+pass "密码框都带「显示 / 隐藏」按钮（共 $(cat "$WORK/pw-count.txt") 个），没有 JS 时自动藏起来"
+
 # 外观（配色 + 亮暗）：三个环节都要对上 —— 设置页能选、服务端渲染的 <link> 和
 # <html data-theme> 跟着变、值非法时不能被拼进 href。
 curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/theme-settings.html"
@@ -495,7 +518,9 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/settings")
 pass "未登录会被挡到登录页"
 
 # 导出配置应当是一份能解析的 JSON
-curl -fsS -b "$JAR" "$BASE/settings/export" > "$WORK/export.json"
+curl -fsS -b "$JAR" -D "$WORK/export-headers.txt" "$BASE/settings/export" > "$WORK/export.json"
+grep -qi "content-disposition: attachment; filename=\"forward2any-.*\.json\"" "$WORK/export-headers.txt" \
+  || fail "导出响应缺少下载用的文件名头"
 python3 -c "
 import json, sys
 d = json.load(open('$WORK/export.json'))
@@ -504,9 +529,20 @@ assert len(d['sources']) == 2, len(d['sources'])
 assert len(d['rules']) == 1, len(d['rules'])
 assert d['rules'][0]['from'] == [0], d['rules'][0]['from']
 assert d['rules'][0]['to'] == [1], d['rules'][0]['to']
-assert 'admin_pass_hash' not in json.dumps(d), '导出文件不应包含密码哈希'
+raw = open('$WORK/export.json').read()
+assert 'admin_pass_hash' not in raw, '导出文件不应包含密码哈希'
+# 主键与时间戳不进文件：源靠 index 被规则引用，换机器导入时这些值没有意义
+for bad in ('\"id\"', '\"created_at\"', '\"updated_at\"', '\"web_port\"'):
+    assert bad not in raw, '导出文件里不该出现 %s' % bad
+# 跟着文件走的设置项
+s = d['settings']
+assert s['retry_max'] == 5, s
+assert s['retry_backoff_seconds'] == 10, s
+assert s['payload_max_bytes'] == 65536, s
+assert s['log_retention_days'] == 30, s
+assert s['base_url'] == '$BASE', s
 " || fail "导出的配置内容不对"
-pass "配置导出正常，且不含密码哈希"
+pass "配置导出正常：不含密码哈希与数据库主键，设置项跟着文件走"
 
 echo
 echo "== 代理 =="
@@ -959,8 +995,20 @@ post_form \
   --data-urlencode "headers_template={}" \
   "$BASE/rules"
 
-curl -fsS -c "$JAR" -b "$JAR" -o /dev/null \
-  -F "file=@$WORK/export.json" "$BASE/settings/import"
+# 再把「投递与日志」里的一项改掉：导入后应当被文件里带着的值覆盖回去
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=9" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  "$BASE/settings"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -c "$JAR" -b "$JAR" \
+  -F "file=@$WORK/export.json" "$BASE/settings/import")
+[ "$code" = "303" ] || fail "导入应当重定向回设置页，实际 $code"
 
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules" > "$WORK/rules2.html"
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$WORK/sources2.html"
@@ -971,6 +1019,45 @@ fi
 grep -q "转发到 mock" "$WORK/rules2.html" || fail "导入后规则丢了"
 grep -q "gh-e2e" "$WORK/sources2.html" || fail "导入后源丢了"
 pass "导入整体替换生效，源与规则都恢复成导出时的样子"
+
+# 文件里带着的设置项要覆盖本机（刚才改成 9 的 retry_max 应当回到导出时的 5）
+curl -fsS -b "$JAR" "$BASE/settings/export" > "$WORK/export2.json"
+python3 -c "
+import json
+d = json.load(open('$WORK/export2.json'))
+assert d['settings']['retry_max'] == 5, d['settings']
+assert d['settings']['base_url'] == '$BASE', d['settings']
+" || fail "导入没有把文件里的设置项写回去"
+# 文件里没带的设置项保持原样：主题仍是导入前的 jade、管理员账号没变
+curl -fsS "$BASE/login" > "$WORK/login-after-import.html"
+grep -q "/static/palettes/jade.css" "$WORK/login-after-import.html" \
+  || fail "导入不该动文件里没有的外观设置"
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/settings-after-import.html"
+grep -q "value=\"$ADMIN_USER\"" "$WORK/settings-after-import.html" \
+  || fail "导入不该动管理员账号"
+pass "导入带上文件里的设置项，文件里没有的设置项保持原样"
+
+# 坏配置要整份拒绝，库里一条都不许动
+python3 -c "
+import json
+d = json.load(open('$WORK/export.json'))
+d['rules'][0]['filters'] = [{'path': 'action', 'op': 'startswith', 'value': 'push'}]
+json.dump(d, open('$WORK/bad-import.json', 'w'))
+"
+code=$(curl -s -o "$WORK/bad-import.html" -w '%{http_code}' -c "$JAR" -b "$JAR" \
+  -F "file=@$WORK/bad-import.json" "$BASE/settings/import")
+[ "$code" = "200" ] || fail "坏配置应当在设置页就地报错（200），实际 $code"
+grep -q "操作符" "$WORK/bad-import.html" || fail "坏配置的报错里没说清原因"
+curl -fsS -b "$JAR" "$BASE/rules" > "$WORK/rules3.html"
+grep -q "转发到 mock" "$WORK/rules3.html" || fail "坏配置被拒绝后，原有规则不该动"
+curl -fsS -b "$JAR" "$BASE/settings/export" > "$WORK/export3.json"
+python3 -c "
+import json
+d = json.load(open('$WORK/export3.json'))
+assert d['settings']['retry_max'] == 5, d['settings']
+assert len(d['sources']) == 2 and len(d['rules']) == 1, (len(d['sources']), len(d['rules']))
+" || fail "坏配置被拒绝后，库里的配置不该动"
+pass "坏配置整份拒绝：报出原因，源、规则、设置都没动"
 
 echo
 echo "== 默认密码与强制改密 =="
@@ -1104,21 +1191,31 @@ code=$(curl -s -o "$WORK/ch-recv.out" -w '%{http_code}' -b "$JAR" -c "$JAR" -X P
 grep -q "只能用作发送源" "$WORK/ch-recv.out" || fail "渠道类型选成接收源应当被拒绝，实际：$(cat "$WORK/ch-recv.out")"
 pass "渠道类型被限制为发送源"
 
-# 从导出文件里按名字取源 id，不依赖自增顺序。
+# 从「源」页面按名字取源 id，不依赖自增顺序。
+# 导出文件里没有主键（换机器导入时那东西没有意义），所以 id 只能从页面上认：
+# 每张源卡片里都有 /sources/<id>/edit 这类链接，按名字找到自己那张卡片再取 id。
 # 先落盘再解析：管道配 set -o pipefail 时，读一半退出会连累整条命令判失败。
 source_id() {
-  local want="$1" file="$WORK/export.json"
-  curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings/export" > "$file" || return 1
+  local want="$1" file="$WORK/sources-ids.html"
+  curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$file" || return 1
   python3 - "$file" "$want" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1]))
+import re, sys
+html = open(sys.argv[1], encoding='utf-8').read()
 want = sys.argv[2]
-for src in data["sources"]:
-    if src.get("name") == want:
-        print(src["id"])
+names = []
+for card in re.split(r'<div class="panel source-card', html)[1:]:
+    m = re.search(r'<span class="source-name">(.*?)</span>', card)
+    if not m:
+        continue
+    names.append(m.group(1))
+    if m.group(1) == want:
+        i = re.search(r'/sources/(\d+)/edit', card)
+        if not i:
+            sys.exit("源 %r 的卡片里没有编辑链接，取不到 id" % want)
+        print(i.group(1))
         break
 else:
-    sys.exit("找不到名为 %r 的源（现有：%r）" % (want, [s.get("name") for s in data["sources"]]))
+    sys.exit("找不到名为 %r 的源（现有：%r）" % (want, names))
 PY
 }
 DING_ID="$(source_id 钉钉渠道)"

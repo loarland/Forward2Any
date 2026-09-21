@@ -10,7 +10,9 @@ import (
 // 同一个源既可作接收方也可作发送方，取决于规则里把它放在哪一侧；
 // Usage 只是用来决定表单显示哪些字段。
 type Source struct {
-	ID         int64  `json:"id"`
+	// ID / CreatedAt / UpdatedAt 只在库里那一行有意义：导出配置时会被清零，
+	// omitempty 让它们干脆不出现在文件里（导入时一律重新生成）。
+	ID         int64  `json:"id,omitempty"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
 	Usage      string `json:"usage"`
@@ -60,8 +62,8 @@ type Source struct {
 	IMAPFolder   string `json:"imap_folder"`
 	IMAPInterval int    `json:"imap_interval"`
 
-	CreatedAt int64 `json:"created_at"`
-	UpdatedAt int64 `json:"updated_at"`
+	CreatedAt int64 `json:"created_at,omitempty"`
+	UpdatedAt int64 `json:"updated_at,omitempty"`
 }
 
 // DefaultTgEndpoint 是 Telegram Bot API 的默认前缀，token 会拼在它后面。
