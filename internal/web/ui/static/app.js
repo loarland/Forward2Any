@@ -109,16 +109,24 @@
     }
   });
 
-  // 3) 复制回调地址。
+  // 3) 复制。
+  //    两种写法：data-copy 直接带要复制的字符串（回调地址），
+  //    data-copy-from 给一个选择器、复制那个元素的 textContent（curl 示例这种多行块，
+  //    塞进属性里会被转义得没法看）。转义过的实体在 textContent 上已经还原，粘出来就是原文。
   document.addEventListener('click', function (e) {
     if (!e.target || !e.target.closest) {
       return;
     }
-    var btn = e.target.closest('[data-copy]');
+    var btn = e.target.closest('[data-copy], [data-copy-from]');
     if (!btn) {
       return;
     }
     var text = btn.getAttribute('data-copy') || '';
+    var from = btn.getAttribute('data-copy-from');
+    if (from) {
+      var src = document.querySelector(from);
+      text = src ? src.textContent : '';
+    }
 
     var flash = function () {
       var old = btn.textContent;

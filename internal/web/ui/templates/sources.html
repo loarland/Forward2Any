@@ -78,9 +78,14 @@
       <input type="text" readonly value="{{.HookURL}}" onclick="this.select()">
       <button class="sm" type="button" data-copy="{{.HookURL}}">复制</button>
     </div>
-    <details>
-      <summary>curl 示例</summary>
-      <pre class="body">{{.Curl}}</pre>
+    <details class="code-block">
+      {{/* 复制按钮放进 summary 里：实测点它不会连带展开/收起（summary 里的交互元素不触发 toggle），
+           所以收起来的状态下也能直接复制整段 —— 复制读的是 pre 的 textContent，跟展没展开无关。 */}}
+      <summary>
+        <span class="code-title">curl 示例</span>
+        <button type="button" class="btn sm" data-copy-from="#curl-{{.Src.ID}}">复制</button>
+      </summary>
+      <pre class="code" id="curl-{{.Src.ID}}">{{.Curl}}</pre>
     </details>
     {{end}}
 

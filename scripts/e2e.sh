@@ -376,6 +376,43 @@ grep -q 'data-kind="webhook"' "$WORK/sources_list.html" || fail "源的行上没
 grep -q 'data-enabled="1"' "$WORK/rules_list.html" || fail "规则的行上没有状态属性，筛选没法生效"
 pass "源 / 规则的筛选条与行标记都渲染出来了"
 
+# 源卡片上的 curl 示例：要能一键复制（按钮指的 id 必须真的存在），
+# 示例里的地址、鉴权头也要跟这个源对得上。
+python3 - "$WORK/sources_list.html" <<'CURLCOPY'
+import re
+import sys
+
+html = open(sys.argv[1]).read()
+bad = []
+box = re.search(r'(?s)<details class="code-block">.*?</details>', html)
+if not box:
+    bad.append('源卡片上没有 curl 示例的代码块')
+else:
+    box = box.group(0)
+    btn = re.search(r'<button[^>]*data-copy-from="#([^"]+)"', box)
+    if not btn:
+        bad.append('curl 示例没有一键复制的按钮')
+    elif ('id="%s"' % btn.group(1)) not in box:
+        bad.append('复制按钮指向 #%s，但页面上没有这个 id' % btn.group(1))
+    if not re.search(r'(?s)<summary>.*data-copy-from.*</summary>', box):
+        bad.append('复制按钮不在 summary 里，收起来时点不到')
+    pre = re.search(r'(?s)<pre class="code" id="curl-\d+">(.*?)</pre>', box)
+    if not pre:
+        bad.append('示例命令没有渲染成 pre.code')
+    else:
+        text = pre.group(1)
+        for want in ('curl -X POST', '/hook/gh-e2e', 'X-F2A-Token: e2e-secret', 'application/json'):
+            if want not in text:
+                bad.append('示例命令里缺少 %s' % want)
+    # 回调地址那个复制按钮是另一套写法，别在改这段时弄丢
+    if 'data-copy="' not in html:
+        bad.append('回调地址的复制按钮不见了')
+if bad:
+    print('\n'.join('  - ' + b for b in bad), file=sys.stderr)
+    sys.exit(1)
+CURLCOPY
+pass "curl 示例带一键复制，按钮指的 id 存在且内容对得上这个源"
+
 # 投递日志的关键字搜索走服务端（记录会一直涨、还要分页），得真查一次库。
 curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=mock" "$BASE/deliveries" > "$WORK/dl_hit.html"
 curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=根本没有这个名字" "$BASE/deliveries" > "$WORK/dl_miss.html"

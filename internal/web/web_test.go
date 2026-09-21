@@ -1108,3 +1108,60 @@ func TestRuleFormHasNoNestedLabels(t *testing.T) {
 		}
 	}
 }
+
+// 源卡片上的「curl 示例」：一键复制的按钮必须指名一个真的存在的元素 ——
+// 选择器写错的话点下去是静默无效，谁都发现不了。顺带钉住「按钮在 summary 里」，
+// 这样收起来的状态下也能直接复制整段。
+func TestSourcesPageCurlCopyTargetsExist(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSettings(map[string]string{store.KeyBaseURL: "http://example.test:16000"}); err != nil {
+		t.Fatal(err)
+	}
+	src := &store.Source{
+		Name: "钩子", Kind: "webhook", Usage: "in", Enabled: true, Slug: "gh",
+		Headers: "{}", HTTPMethod: "POST", AuthMode: "none",
+	}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	rec := httptest.NewRecorder()
+	s.handleSourceList(rec, httptest.NewRequest("GET", "/sources", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("源列表渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	sels := regexp.MustCompile(`data-copy-from="#([^"]+)"`).FindAllStringSubmatch(body, -1)
+	if len(sels) == 0 {
+		t.Fatal("源卡片上没有 curl 示例的复制按钮")
+	}
+	for _, m := range sels {
+		if !strings.Contains(body, `id="`+m[1]+`"`) {
+			t.Errorf("复制按钮指向 #%s，但页面上没有这个 id", m[1])
+		}
+	}
+
+	// 按钮要在 summary 里（收起来也能点），示例命令要在 pre.code 里。
+	sum := regexp.MustCompile(`(?s)<summary>(.*?)</summary>`).FindStringSubmatch(body)
+	if sum == nil || !strings.Contains(sum[1], "data-copy-from") {
+		t.Error("复制按钮应当放在 summary 里，收起来时也能复制")
+	}
+	pre := regexp.MustCompile(`(?s)<pre class="code" id="curl-\d+">(.*?)</pre>`).FindStringSubmatch(body)
+	if pre == nil {
+		t.Fatal("curl 示例没有渲染成 pre.code")
+	}
+	if !strings.Contains(pre[1], "/hook/gh") || !strings.Contains(pre[1], "curl -X POST") {
+		t.Errorf("curl 示例的内容不对：%s", pre[1])
+	}
+
+	// 回调地址那个复制按钮用的是 data-copy（老写法），别在改这段时弄丢。
+	if !strings.Contains(body, "data-copy=") {
+		t.Error("回调地址的复制按钮不见了")
+	}
+}

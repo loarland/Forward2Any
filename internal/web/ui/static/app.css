@@ -465,6 +465,50 @@ pre.body {
   margin: 0;
 }
 
+/* ---------- 代码块 ----------
+   标题行 + 一段命令，外面是一张圆角卡片。标题行本身就是 <summary>，
+   所以整行可点展开，而里面的「复制」按钮点下去不会连带收起（summary 里的交互元素不触发 toggle）。
+   复制按钮靠 `html:not(.js)` 藏掉：没有 JS 时它点了没反应，不如不显示。 */
+.code-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.code-block > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface-3);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.code-block > summary::before {
+  color: var(--muted);
+  font-size: 10px;
+  content: "▶";
+}
+.code-block[open] > summary { border-bottom: 1px solid var(--line); }
+.code-block[open] > summary::before { content: "▼"; }
+.code-title { font-weight: 500; }
+.code-block > summary .btn { margin: 0 0 0 auto; flex: 0 0 auto; }
+
+pre.code {
+  margin: 0;
+  padding: 11px 12px;
+  overflow: auto;
+  background: var(--surface-2);
+  font-size: 12.5px;
+  line-height: 1.7;
+  /* 命令里的引号、路径都可能很长，宁可换行也不要横向滚动条 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+html:not(.js) [data-copy],
+html:not(.js) [data-copy-from] { display: none; }
+
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row input { flex: 1; background: var(--surface-2); }
 
