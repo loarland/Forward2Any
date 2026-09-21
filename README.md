@@ -173,10 +173,9 @@ export F2A_BASE_URL="http://<服务器地址>:9000"
 docker compose up -d
 ```
 
-> **包还是私有的时候要先登录**：`docker login ghcr.io -u <用户名> -p <有 read:packages 权限的 token>`。
-> 仓库改成公开之后，**还要单独把这个包也改成公开** —— 容器包不会跟着仓库自动变公开，
-> 从私有仓库发出来的包一直是私有的。改的地方：GitHub → 头像 → Your packages → `forward2any`
-> → Package settings → Change visibility。
+> 镜像是公开的，`docker pull ghcr.io/loarland/forward2any:latest` **不需要登录**，
+> 匿名拉取也没问题。国内直连 `ghcr.io` 有时会不稳（偶发 EOF / 超时），可以给 Docker 配镜像加速，
+> 或者干脆走「方式一」的二进制 —— 那条路下载的是 GitHub Releases 里的包，不经过 ghcr.io。
 
 > `F2A_BASE_URL` 很重要：后台显示的回调地址和 curl 示例都按它生成。服务在反向代理后面时，
 > 这里要填外部真正的访问地址，而不是 `localhost`。
