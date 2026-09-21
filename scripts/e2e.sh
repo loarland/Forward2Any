@@ -423,6 +423,18 @@ if bad:
 CURLCOPY
 pass "curl 示例带一键复制，按钮指的 id 存在且内容对得上这个源"
 
+# 提示（已保存 / 测试已发送）要做成不占位的浮层：它要是占页面流，出现时整页高度会变，
+# 跨过「要不要滚动条」那条线时经典滚动条会让整页横移一下。
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources?ok=tested" > "$WORK/flash.html"
+grep -q 'class="toast"' "$WORK/flash.html" || fail "保存/测试之后的提示不是浮层"
+grep -q 'role="status"' "$WORK/flash.html" || fail "浮层缺 role=status（它会自己消失，读屏得能念到）"
+grep -q 'class="alert ok"' "$WORK/flash.html" && fail "提示又变回会占位的横条了"
+grep -q 'data-toast-close' "$WORK/flash.html" || fail "浮层没有关闭按钮"
+curl -fsS -b "$JAR" "$BASE/static/app.css" > "$WORK/app.css"
+grep -q 'html:not(.js) .toast-close' "$WORK/app.css" || fail "无 JS 时没有把关闭按钮藏掉（点了没反应）"
+grep -q 'overflow-y: scroll' "$WORK/app.css" || fail "没有给滚动条占住槽位，内容宽度还会跟着页面高度变"
+pass "提示是不占位的浮层（带关闭按钮，无 JS 时藏掉；滚动条槽位常驻）"
+
 # 投递日志的关键字搜索走服务端（记录会一直涨、还要分页），得真查一次库。
 curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=mock" "$BASE/deliveries" > "$WORK/dl_hit.html"
 curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=根本没有这个名字" "$BASE/deliveries" > "$WORK/dl_miss.html"

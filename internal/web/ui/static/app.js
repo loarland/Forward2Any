@@ -509,6 +509,36 @@
     syncCount();
   });
 
+  // 8) 一次性反馈的浮层（已保存 / 已删除 / 测试已发送）。
+  //    自动淡出是 CSS 动画干的（没有 JS 也会消失），这里只补两件事：
+  //    点 × 或按 Esc 提前关掉，以及把地址栏里的 ok= 摘掉 —— 不然刷新一下又弹一次。
+  (function () {
+    var toast = document.querySelector('.toast');
+    if (!toast) {
+      return;
+    }
+    function close() {
+      toast.remove();
+    }
+    var btn = toast.querySelector('[data-toast-close]');
+    if (btn) {
+      btn.addEventListener('click', close);
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        close();
+      }
+    });
+    if (window.history && history.replaceState) {
+      var u = new URL(location.href);
+      if (u.searchParams.has('ok')) {
+        u.searchParams.delete('ok');
+        history.replaceState(null, '', u.pathname +
+          (u.searchParams.toString() ? '?' + u.searchParams : '') + u.hash);
+      }
+    }
+  })();
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

@@ -1406,3 +1406,58 @@ func TestRuleFormHidesTelegramFromReceiveColumn(t *testing.T) {
 		t.Error("被藏起来的源要说明一声")
 	}
 }
+
+// 「已保存 / 测试已发送」这类提示必须是不占位的浮层。
+//
+// 以前它是一条占页面流的横条：出现的那一刻整页高度会变，跨过「要不要纵向滚动条」
+// 那条线时，经典滚动条会占走 15px，居中的内容随之整体横移（无头 Chrome 里实测
+// 7.5px，列表页上就是搜索框和按钮「抖一下」）。这条测试钉住「浮层 + 会自动消失 +
+// 不拦点击」，顺便钉住 html 的滚动条槽位不跟着内容高度变。
+func TestFlashRendersAsNonBlockingToast(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+
+	// ok=tested 是「发送测试」之后跳回来的那种 URL
+	rec := httptest.NewRecorder()
+	s.handleSourceList(rec, httptest.NewRequest("GET", "/sources?ok=tested", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("源列表渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `class="toast"`) {
+		t.Error("提示没有渲染成浮层（.toast）")
+	}
+	if strings.Contains(body, `class="alert ok"`) {
+		t.Error("提示又变回占位横条了：它会顶动页面，滚动条一出现整页就横移")
+	}
+	if !strings.Contains(body, `role="status"`) {
+		t.Error("浮层要用 role=status，读屏才会念一遍（它会自己消失，错过就没了）")
+	}
+	if !strings.Contains(body, "data-toast-close") {
+		t.Error("浮层缺关闭按钮")
+	}
+
+	app, err := ui.StaticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(app)
+	for _, want := range []struct{ what, re string }{
+		{"浮层要固定定位（占位就会顶动页面）", `(?s)\.toast\s*\{[^}]*position:\s*fixed`},
+		{"浮层不能吃点击（它可能正盖着页面头的按钮）", `(?s)\.toast\s*\{[^}]*pointer-events:\s*none`},
+		{"关闭按钮要单独把点击收回来", `(?s)\.toast-close\s*\{[^}]*pointer-events:\s*auto`},
+		{"浮层要自己淡出（没有 JS 时也得消失，不能一直糊在页面上）", `(?s)@keyframes toast-life.*?visibility:\s*hidden`},
+		{"无 JS 时关闭按钮点了没反应，要藏掉", `html:not\(\.js\) \.toast-close\s*\{\s*display:\s*none`},
+		// scrollbar-gutter: stable 对根元素不预留槽位（量过），只能靠 overflow-y: scroll
+		{"滚动条槽位要一直占住，内容宽度才不跟着页面高度变", `(?s)html\s*\{[^}]*overflow-y:\s*scroll`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(css) {
+			t.Errorf("app.css 里缺少这条规则：%s", want.what)
+		}
+	}
+}

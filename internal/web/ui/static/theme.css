@@ -89,4 +89,9 @@
   /* ---------- 中性标签（未投递 / 已停用）---------- */
   --neutral-bg:   var(--surface-3);
   --neutral-text: var(--muted);
+
+  /* ---------- 浮层的投影 ----------
+     拿 --pico-contrast 混：亮色下它是近黑 → 一层正常的深色阴影；
+     暗色下它是近白 → 一层淡淡的光晕，正好当暗色界面里的「抬高」。 */
+  --shadow-pop: 0 6px 20px color-mix(in srgb, var(--pico-contrast) 22%, transparent);
 }

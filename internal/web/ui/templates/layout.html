@@ -42,7 +42,14 @@
   <strong>你仍在使用默认密码 <span class="mono">{{.DefaultPasswordValue}}</span>。</strong>
   在改掉它之前，后台只开放本页。请在下方「管理员账号」里设置新密码。
 </div>{{end}}
-{{if .Flash}}<div class="alert ok">{{.Flash}}</div>{{end}}
+{{/* 「已保存」「测试已发送」这类反馈做成浮层，不再占页面流里的位置：
+     横条一出现整页往下顶，页面高度跨过「要不要滚动条」那条线时，
+     经典滚动条会占走 15px，居中的内容会整体横移一下（实测 7.5px）。
+     浮层不占位，几秒后自己淡出；× 需要 JS，没有 JS 时藏掉。 */}}
+{{if .Flash}}<div class="toast" role="status" aria-live="polite">
+  <span>{{.Flash}}</span>
+  <button class="toast-close" type="button" data-toast-close aria-label="关闭提示" title="关闭">×</button>
+</div>{{end}}
 {{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
 {{template "content" .}}
 </main>
