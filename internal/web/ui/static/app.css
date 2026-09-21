@@ -484,13 +484,20 @@ pre.body {
   font-size: 12.5px;
   cursor: pointer;
 }
+/* 展开指示符用 CSS 画的三角，不用字形：▸ 这类字符在有些系统上会被当成 emoji 渲染成彩色的，
+   跟这套单色界面不搭。flex 布局也会吃掉浏览器自带的那颗 marker，所以这块必须自己画。 */
 .code-block > summary::before {
-  color: var(--muted);
-  font-size: 10px;
-  content: "▶";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--muted);
+  transition: transform 0.15s;
+  content: "";
 }
 .code-block[open] > summary { border-bottom: 1px solid var(--line); }
-.code-block[open] > summary::before { content: "▼"; }
+.code-block[open] > summary::before { transform: rotate(90deg); }
 .code-title { font-weight: 500; }
 .code-block > summary .btn { margin: 0 0 0 auto; flex: 0 0 auto; }
 
