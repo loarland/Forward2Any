@@ -6,6 +6,9 @@
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
+# 版本号由 CI 传进来（打标签时是 1.0.1，main 上是 sha-xxxxxxxx）；
+# 本地 docker build 不传就是 dev。`f2a version` 和启动日志都用它。
+ARG VERSION=dev
 WORKDIR /src
 
 # 先只拷依赖描述文件，这一层能吃到缓存
@@ -14,7 +17,8 @@ RUN go mod download
 
 COPY . .
 # CGO_ENABLED=0：SQLite 用的是纯 Go 实现，所以能静态编译进 distroless
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/f2a ./cmd/f2a \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /out/f2a ./cmd/f2a \
     && mkdir -p /out/data
 
 # ---- 运行 ----
@@ -22,6 +26,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/f2a /f2a
+# 分发的镜像里带上许可证原文（Apache-2.0 第 4 条要求随分发附带）
+COPY --from=build /src/LICENSE /LICENSE
 # 提前把 /data 建出来并交给 nonroot，这样命名卷会继承属主、非 root 也能写
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 

@@ -12,11 +12,11 @@ data/
 *.db-shm
 
 # 文档、脚本与 CI 配置（不参与编译；改这些不该让镜像重新构建）
+# LICENSE 例外：它要 COPY 进镜像，所以不能挡
 *.md
 scripts/
 deploy/
 .github/
-LICENSE
 
 # 编辑器 / 系统
 .DS_Store

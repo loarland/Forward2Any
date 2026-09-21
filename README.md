@@ -8,7 +8,7 @@
 [![Image](https://img.shields.io/badge/%E9%95%9C%E5%83%8F-%E7%BA%A6%2018MB-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
 [![Docker image](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml/badge.svg)](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml)
 [![Release](https://img.shields.io/github/v/release/loarland/Forward2Any?style=flat-square)](https://github.com/loarland/Forward2Any/releases)
-[![License](https://img.shields.io/badge/License-GPL--3.0-16a34a?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-16a34a?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/forks)
 
@@ -892,4 +892,17 @@ docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck:stable -S warning /mnt/scr
 
 ## 许可证
 
-[GPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)，Copyright 2026 loarland。
+
+商用、修改、再分发都可以，保留版权声明与许可原文即可；同时明确授予了专利许可。
+发布包和容器镜像里都带了一份 [LICENSE](LICENSE) 原文。
+
+仓库里内嵌了两份第三方前端资源，各自的许可声明保留在文件开头：
+
+| 组件 | 版本 | 许可 |
+| --- | --- | --- |
+| [Pico CSS](https://picocss.com)（`pico.min.css` 与 `palettes/*.css`） | 2.1.1 | MIT |
+| [htmx](https://htmx.org)（`htmx.min.js`） | 2.0.4 | BSD-2-Clause |
+
+Go 依赖的许可见各自模块（纯 Go 的 SQLite 驱动、bcrypt、SMTP / IMAP / MIME 客户端，
+都是 BSD / MIT 这类宽松许可）。

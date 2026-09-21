@@ -41,6 +41,17 @@ jobs:
 
       # 编译那一步在 runner 自己的架构上跑（Dockerfile 里用 GOARCH=$TARGETARCH 交叉编译），
       # 运行层没有 RUN，所以其实用不到模拟；登记 binfmt 是为了以后往运行层加命令时不会突然挂掉。
+      # 镜像里的 `f2a version` 也要对得上：打标签时用版本号（去掉 v），
+      # main 上用 sha-短哈希，跟镜像标签是同一套口径。
+      - name: 算出要写进二进制的版本号
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=sha-$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 准备 QEMU 与 Buildx
         uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
@@ -70,6 +81,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: VERSION=${{ steps.ver.outputs.value }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # gha 缓存：第二次构建开始，go mod download 和依赖层都能命中
