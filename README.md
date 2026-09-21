@@ -19,9 +19,8 @@
 Forward2Any 是一个自托管的**消息转发中继**：把收到的 Webhook 或邮件，按你配置的规则转发到一个或多个
 Webhook、邮箱或 Telegram。
 
-它解决的是「同一个事件要通知好几个地方」这件事。CI 的构建结果要进群、要抄送邮箱、还要打到自建系统 ——
-与其在每个发送方里配三遍 Webhook，不如让它收一次，剩下的事交给规则。过滤条件决定「要不要转」，
-模板决定「转成什么样」，投递日志决定「转出问题了怎么查」。
+解决的问题：同一个事件要通知多个地方（CI 结果进群、抄送邮箱、再打到自建系统），
+不必在每个发送方各配一遍 Webhook —— 收一次，由规则分发。
 
 - **单端口**：后台界面和所有 Webhook 接收端点共用同一个端口，靠路径区分。新增接收源不用开端口，
   也不用改 Docker 配置和防火墙。
@@ -93,14 +92,14 @@ flowchart LR
 
 ### 方式一：一键脚本（推荐，Linux + systemd）
 
-一台干净的 Linux 服务器上，一条命令搞定：下载发布包、校验 sha256、装二进制、建系统用户和
-数据目录、写 systemd 单元、启动并等它通过健康检查。
+干净的 Linux 服务器上一条命令：下载发布包、校验 sha256、装二进制、建系统用户与数据目录、
+写 systemd 单元、启动并等健康检查通过。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/loarland/Forward2Any/main/scripts/install.sh | sudo bash
 ```
 
-跑完会把后台地址、管理员账号和随机生成的密码打印出来。想先看看脚本干了什么再跑：
+跑完会打印后台地址和管理员密码。先看脚本再跑：
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/loarland/Forward2Any/main/scripts/install.sh
@@ -143,8 +142,8 @@ export F2A_BASE_URL="https://hooks.example.com"
 docker compose up -d
 ```
 
-`docker-compose.yml` 里默认就是 `image: ghcr.io/loarland/forward2any:latest`，所以这一条命令
-等于「拉最新镜像 + 起容器」。不想 clone 仓库的话直接 `docker run` 也一样：
+`docker-compose.yml` 默认用 `image: ghcr.io/loarland/forward2any:latest`（先拉再起）。
+不 clone 仓库的话直接 `docker run`：
 
 ```bash
 docker run -d --name forward2any --restart unless-stopped \
@@ -173,9 +172,7 @@ export F2A_BASE_URL="http://<服务器地址>:9000"
 docker compose up -d
 ```
 
-> 镜像是公开的，`docker pull ghcr.io/loarland/forward2any:latest` **不需要登录**，
-> 匿名拉取也没问题。国内直连 `ghcr.io` 有时会不稳（偶发 EOF / 超时），可以给 Docker 配镜像加速，
-> 或者干脆走「方式一」的二进制 —— 那条路下载的是 GitHub Releases 里的包，不经过 ghcr.io。
+> 镜像公开，`docker pull` 不需要登录。国内直连 `ghcr.io` 可能不稳，可配镜像加速或改用方式一。
 
 > `F2A_BASE_URL` 很重要：后台显示的回调地址和 curl 示例都按它生成。服务在反向代理后面时，
 > 这里要填外部真正的访问地址，而不是 `localhost`。
@@ -199,8 +196,7 @@ F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" ./f2a
 
 ## 二进制部署与 systemd 服务
 
-不想用 Docker 就直接跑二进制。发布包是静态编译的（`CGO_ENABLED=0`），
-除了 Linux 内核什么都不依赖 —— 没有 glibc 版本问题，Alpine 也能跑。
+不想用 Docker 就直接跑二进制。发布包静态编译（`CGO_ENABLED=0`），不依赖 glibc，Alpine 也能跑。
 
 一键脚本落地的东西都在这几个路径上，手动装也按同一套约定来：
 
@@ -248,12 +244,12 @@ f2a version                                      # 确认装上的是哪个版�
 curl -fsS http://127.0.0.1:16000/healthz         # 探活，返回 ok 就对了
 ```
 
-> 想用二进制自带的探活（`f2a healthcheck`，它按数据库里记的实际端口探、设置页改过端口也不会误判）
-> 请**以服务用户的身份**跑：`sudo -u f2a env F2A_DATA_DIR=/var/lib/forward2any f2a healthcheck`。
-> 用 root 跑它会在数据目录里留下 root 属主的 `-wal`/`-shm`，之后服务反而打不开库。
+> 用二进制自带的探活（`f2a healthcheck`，按数据库里的实际端口探）要**以服务用户身份**跑：
+> `sudo -u f2a env F2A_DATA_DIR=/var/lib/forward2any f2a healthcheck` ——
+> root 跑会在数据目录留下 root 属主的 `-wal`/`-shm`，服务反而打不开库。
 
-> `F2A_BASE_URL` 一定要填外部真正能访问到的地址（域名或公网 IP）—— 回调 URL 和 curl 示例
-> 都按它生成。填成默认的 `localhost` 的话，回调地址拿去给 GitHub / Stripe 是用不了的。
+> `F2A_BASE_URL` 必须填外部能访问到的地址（域名或公网 IP）：回调 URL 和 curl 示例都按它生成，
+> 留 `localhost` 的话发给 GitHub / Stripe 无效。
 
 ### 平时怎么管
 
@@ -268,10 +264,10 @@ curl -fsS http://127.0.0.1:16000/healthz        # 探活
 
 ### 单元文件里做了什么
 
-单元文件就在仓库里：`deploy/forward2any.service`。几条值得知道的：
+单元文件在仓库里：`deploy/forward2any.service`。要点：
 
-- `Restart=always`，`KillSignal=SIGTERM`：二进制收到 SIGTERM 会优雅关闭，**没投完的记录留在库里**，
-  下次启动接着投 —— 所以别用 `kill -9`。
+- `Restart=always`，`KillSignal=SIGTERM`：收到 SIGTERM 会优雅关闭，**没投完的记录留在库里**、
+  下次启动接着投。别用 `kill -9`。
 - 加固：`NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome`、`PrivateTmp`、`PrivateDevices`、
   空 `CapabilityBoundingSet`、`RestrictAddressFamilies`、`SystemCallFilter=@system-service`、
   `MemoryDenyWriteExecute`。它能写的地方只有自己的数据目录。
@@ -285,8 +281,8 @@ curl -fsS http://127.0.0.1:16000/healthz        # 探活
 `/etc/forward2any.env` 里那些值**只在首次启动时**写进数据库，之后一律以后台「设置」页为准。
 所以：
 
-- 服务跑起来之后要换端口，请到后台「设置」页改（改完立即重新绑定，不用重启服务），
-  同时别忘了防火墙 / 反向代理 / `F2A_BASE_URL` 也要跟着改。
+- 换端口到后台「设置」页改（立即重新绑定，不用重启服务），防火墙 / 反向代理 / `F2A_BASE_URL`
+  同步改。
 - 想改管理员密码，用后台「设置 → 管理员账号」，不是改环境变量文件。
   忘了密码见[常见问题](#忘记后台密码)。
 
@@ -443,8 +439,8 @@ curl -X POST 'https://api.telegram.org/bot<token>/sendMessage' \
 独立的投递记录，各自重试。
 
 两栏都只列**用途对得上的源**：接收源栏只列用途含接收的源，目标源栏只列用途含发送的源；
-被藏起来几个会在栏底说明。已经选上的源即使用途改了也仍然留在栏里并注明原因，免得你打开表单随手
-一存就把目标悄悄抹掉。源超过 6 个时栏里会出现搜索框，还有「全选 / 清空」。
+被藏起来的会在栏底说明。已经选上的源即使用途改了也留在栏里并注明原因，
+否则打开表单保存一次就会抹掉这个目标。源超过 6 个时栏里会出现搜索框，还有「全选 / 清空」。
 
 ### 过滤条件
 
@@ -617,9 +613,9 @@ URL 带路径，所以这一个端口就够了。
 | Docker（命名卷 `f2a-data`） | 容器内 `/data/f2a.db` |
 | 源码直接跑 | `./data/f2a.db`（可用 `F2A_DATA_DIR` 改） |
 
-**导出 / 导入**：后台「设置」页可以把所有源与规则导出成 JSON，也可以导入。导入是**整体替换**，
-不做合并，所以换机器、改坏了回滚都很方便。导出文件里不含管理员账号、密码哈希和监听端口，
-也不含数据库主键（规则通过下标引用源），换一台机器导入不会串号。
+**导出 / 导入**：后台「设置」页可以把所有源与规则导出成 JSON，也可以导入；导入是**整体替换**，
+不做合并。导出文件不含管理员账号、密码哈希和监听端口，也不含数据库主键（规则通过下标引用源），
+换一台机器导入不会串号。
 
 **直接备份数据库**：
 
@@ -633,7 +629,7 @@ docker run --rm -v forward2any_f2a-data:/data -v "$PWD:/backup" alpine \
   tar xzf /backup/f2a-2026-01-02.tar.gz -C /data
 ```
 
-想改用宿主机目录（方便直接 backup）就把 compose 里的卷换成 `./data:/data`。容器里的进程是非 root
+改用宿主机目录（方便备份）就把 compose 里的卷换成 `./data:/data`。容器里的进程是非 root
 （uid 65532）运行的，macOS / Windows 的 Docker Desktop 会自动处理权限，**Linux 上需要先把目录交给它**：
 
 ```bash
@@ -687,8 +683,8 @@ server {
 
 ## 升级
 
-**脚本装的（二进制 + systemd）**：重跑一遍一键脚本就是升级 —— 它会下载新版本、校验、
-换掉二进制和单元文件、重启并等健康检查通过，环境变量文件和数据一概不动：
+**脚本装的（二进制 + systemd）**：重跑一键脚本即升级：下载新版本、校验、替换二进制与单元文件、
+重启并等健康检查通过；环境变量文件与数据不动。
 
 ```bash
 sudo bash install.sh upgrade
@@ -728,7 +724,7 @@ docker compose up -d --build
 
 ### 容器起来了，但宿主访问到的是别的服务
 
-多半是端口撞了。`16000` 可能被别的服务占用，用 `F2A_HOST_PORT` 换一个：
+通常是端口冲突。`16000` 被占用时用 `F2A_HOST_PORT` 换一个：
 
 ```bash
 lsof -nP -iTCP:16000 -sTCP:LISTEN   # 先看看是谁占着
@@ -745,7 +741,7 @@ export F2A_HOST_PORT=9000
 ### 发送方报 404
 
 路径标识写错了。未知路径一律 404，而且**停用的源也是 404**（不区分「不存在」和「已停用」，
-免得被拿来探测）。到「源」页面复制回调地址。
+避免被探测）。到「源」页面复制回调地址。
 
 ### 发送方报 401
 
@@ -770,9 +766,8 @@ Telegram 单条消息的上限是 4096 个字符，超了直接判失败、不�
 
 ### 忘记后台密码
 
-管理员密码是 bcrypt 哈希存在数据库里的，**改环境变量不会覆盖已有的值**。
-重置的办法是删掉那一行，让它在下次启动时按 `F2A_ADMIN_PASSWORD` 重新种一个
-（这是「引导值」唯一一次例外）。
+管理员密码是数据库里的 bcrypt 哈希，**改环境变量不会覆盖已有值**。重置：删掉那一行，
+下次启动会按 `F2A_ADMIN_PASSWORD` 重新生成（引导值机制的唯一例外）。
 
 一键脚本 / 手动装二进制的：
 
@@ -794,8 +789,8 @@ EOF
 F2A_ADMIN_PASSWORD='新密码' docker compose up -d
 ```
 
-> 实测过：删掉之后新密码能登进去、旧密码登不进。`sqlite3` 没装就 `apt install sqlite3` /
-> `apk add sqlite`。库里还有源、规则和投递日志，**别为了重置密码把数据删了**。
+> 下次启动会按 `F2A_ADMIN_PASSWORD` 重建哈希，旧密码随即失效。`sqlite3` 没装就
+> `apt install sqlite3` / `apk add sqlite`。库里还有源、规则和投递日志，**别为了重置密码删数据**。
 
 ### 服务起不来 / 一直重启
 
@@ -869,18 +864,17 @@ bash scripts/e2e-docker.sh
 
 依赖只有 5 个，都是必需的：纯 Go 的 SQLite 驱动、bcrypt、SMTP 客户端、IMAP 客户端、MIME 解析。
 HTTP 路由用标准库 `net/http` 的方法 + 通配符模式，消息体模板用标准库 `text/template`
-（沙箱内无 IO 能力，用户填模板是安全的），前端不引框架。
+（模板内无 IO 能力），前端不引框架。
 
 **镜像**：推送到 `main` 会自动构建 `linux/amd64` + `linux/arm64` 两个架构并推到 GHCR
 （见 `.github/workflows/docker.yml`）；打 `v1.2.3` 这样的标签会额外生成版本号标签。
-构建阶段跑在 runner 自己的架构上、按 `GOARCH=$TARGETARCH` 交叉编译，所以不需要 QEMU 去模拟
-整个 Go 工具链。
+构建阶段在 runner 架构上按 `GOARCH=$TARGETARCH` 交叉编译，不需要 QEMU 模拟。
 
 **发布**：打 `v1.2.3` 这样的标签会触发 `.github/workflows/release.yml`，编译
 linux/darwin × amd64/arm64 的静态二进制、生成 `checksums.txt`，一起发到
 [Releases](https://github.com/loarland/Forward2Any/releases)。
-`scripts/install.sh` 就是拿这些资源装的，所以脚本和发布包是配套的：改了
-`deploy/forward2any.service` 要发新版本才会进到别人的机器上。
+`scripts/install.sh` 装的就是这些包。脚本与发布包配套：改了
+`deploy/forward2any.service` 需要发新版本才会生效。
 
 装出来的版本号靠编译时注入，本地也能验：
 
@@ -894,8 +888,8 @@ docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck:stable -S warning /mnt/scr
 
 [Apache-2.0](LICENSE)，Copyright 2026 loarland。
 
-商用、修改、再分发都可以，保留版权声明与许可原文即可；同时明确授予了专利许可。
-发布包和容器镜像里都带了一份 [LICENSE](LICENSE) 原文。
+可商用、修改、再分发，保留版权声明与许可原文即可，并含专利授权。
+发布包与容器镜像里各带一份 [LICENSE](LICENSE) 原文。
 
 仓库里内嵌了两份第三方前端资源，各自的许可声明保留在文件开头：
 
