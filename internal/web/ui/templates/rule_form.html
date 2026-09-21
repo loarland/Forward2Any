@@ -1,3 +1,55 @@
+{{/* 一栏「选源」列表。接收侧和发送侧共用这一段，靠 rulePicker 里的几个字段区分。
+     注意整栏不能套在 <label> 里：按 HTML 的规则，一个 label 只认它里面第一个表单控件，
+     那样点栏目标题、点列表空白都会去勾第一项（实测过）。
+
+     每一项自己是一个 <label>，整行可点，没有 JS 也照常勾选提交。 */}}
+{{define "picker"}}
+<div class="picker-col" id="pick-{{.Role}}" data-picker="{{.Role}}">
+  <div class="picker-head">
+    <span class="picker-title">{{.Title}}</span>
+    <span class="picker-count" data-picker-count>{{if .Count}}已选 {{.Count}} 个{{else}}未选择{{end}}</span>
+  </div>
+  <p class="picker-hint">{{.Hint}}</p>
+
+  {{/* 只有两三项时这些工具是噪音，等源多起来再出现 */}}
+  {{if gt (len .Options) 2}}
+  <div class="picker-tools" data-picker-tools hidden>
+    {{if gt (len .Options) 6}}
+    <input type="search" data-picker-search placeholder="搜索源" autocomplete="off" aria-label="搜索{{.RoleText}}源">
+    {{end}}
+    <button type="button" class="btn sm" data-picker-all>全选</button>
+    <button type="button" class="btn sm" data-picker-none>清空</button>
+  </div>
+  {{end}}
+
+  {{if .Options}}
+  <div class="picker">
+    {{range .Options}}
+    <label class="pick" data-search="{{.Name}} {{.Slug}} {{kindText .Kind}} {{usageText .Usage}}">
+      <input type="checkbox" name="{{$.Input}}" value="{{.ID}}" {{if .Checked}}checked{{end}}>
+      <span class="pick-body">
+        <span class="pick-line">
+          <span class="pick-name">{{.Name}}</span>
+          {{if not .Enabled}}<span class="tag off">已停用</span>{{end}}
+          <span class="tag">{{kindText .Kind}}</span>
+          <span class="tag usage-{{.Usage}}">{{usageText .Usage}}</span>
+        </span>
+        {{if not .Eligible}}<span class="pick-warn">{{.Warn}}</span>{{end}}
+      </span>
+    </label>
+    {{end}}
+  </div>
+  <div class="picker-empty muted" data-picker-empty hidden>没有匹配的源</div>
+  {{else}}
+  <div class="picker-empty muted">没有可用作{{.Title}}的源。</div>
+  {{end}}
+
+  {{if .Hidden}}
+  <p class="picker-hidden">另有 {{.Hidden}} 个源用途不含{{.RoleText}}，没有列出来。</p>
+  {{end}}
+</div>
+{{end}}
+
 {{define "content"}}
 <div class="page-head">
   <h1>{{if .IsNew}}新建规则{{else}}编辑规则{{end}}</h1>
@@ -17,34 +69,13 @@
 
 <div class="panel">
   <h2>接收源 → 目标源</h2>
+  {{if .NoSource}}
+  <div class="note">还没有源，先去「源」页面创建，再回来建规则。</div>
+  {{else}}
   <div class="grid2">
-    <label>
-      <span>接收源 <span class="hint">这些源收到消息时触发本规则</span></span>
-      <div class="picker">
-        {{range .Sources}}
-        <label>
-          <input type="checkbox" name="from_source_ids" value="{{.ID}}" {{if index $.FromSet .ID}}checked{{end}}>
-          {{.Name}} <span class="muted">（{{kindText .Kind}}·{{usageText .Usage}}）</span>
-        </label>
-        {{else}}
-        <div class="muted">还没有源，先去「源」页面创建</div>
-        {{end}}
-      </div>
-    </label>
-    <label>
-      <span>目标源 <span class="hint">消息会被转发到这些源</span></span>
-      <div class="picker">
-        {{range .Sources}}
-        <label>
-          <input type="checkbox" name="to_source_ids" value="{{.ID}}" {{if index $.ToSet .ID}}checked{{end}}>
-          {{.Name}} <span class="muted">（{{kindText .Kind}}·{{usageText .Usage}}）</span>
-        </label>
-        {{else}}
-        <div class="muted">还没有源，先去「源」页面创建</div>
-        {{end}}
-      </div>
-    </label>
+    {{range .Pickers}}{{template "picker" .}}{{end}}
   </div>
+  {{end}}
 </div>
 
 <div class="panel">

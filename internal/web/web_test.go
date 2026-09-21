@@ -959,3 +959,152 @@ func TestSourceFormRendersProxyToggle(t *testing.T) {
 		t.Error("表单里应当显示当前生效的代理地址")
 	}
 }
+
+// ---------- 规则表单的「选源」两栏 ----------
+
+// ruleFormWithSources 造三个用途不同的源，渲染一次规则表单。
+// 返回整页 HTML 和「接收源」「目标源」两栏各自的 HTML；规则由 build 拿到源 id 后自己拼。
+func ruleFormWithSources(t *testing.T, build func(ids map[string]int64) *store.Rule) (body, from, to string) {
+	t.Helper()
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, v := range []struct{ name, usage string }{
+		{"只接收的源", "in"},
+		{"只发送的源", "out"},
+		{"两用的源", "both"},
+	} {
+		src := &store.Source{Name: v.name, Kind: "webhook", Usage: v.usage, Enabled: true, Headers: "{}"}
+		if err := st.SaveSource(src); err != nil {
+			t.Fatal(err)
+		}
+		ids[v.name] = src.ID
+	}
+
+	s := testServer()
+	s.store = st
+	rec := httptest.NewRecorder()
+	s.renderRuleForm(rec, httptest.NewRequest("GET", "/rules/new", nil), build(ids), "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("规则表单渲染失败：%d %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+
+	// 两栏是相邻的两个兄弟节点，所以「接收源」栏就是从它的标记到「目标源」的标记。
+	fromStart := strings.Index(body, `data-picker="from"`)
+	toStart := strings.Index(body, `data-picker="to"`)
+	if fromStart < 0 || toStart < 0 || toStart < fromStart {
+		t.Fatalf("规则表单里没有找到两栏选源列表：from=%d to=%d", fromStart, toStart)
+	}
+	return body, body[fromStart:toStart], body[toStart:]
+}
+
+// rowOf 返回某一行的定位串。带上结尾空格是为了只匹配那一行的 data-search，
+// 而不是页面其它地方出现的源名。
+func rowOf(name string) string { return `data-search="` + name + ` ` }
+
+// 用途不合适的源默认不出现在那一栏里：放上去只会让人以为配了就能用。
+// 判断依据跟服务端执行时一致（接收侧 CanReceive、发送侧 CanSend）。
+func TestRuleFormPickerFiltersByUsage(t *testing.T) {
+	_, from, to := ruleFormWithSources(t, func(map[string]int64) *store.Rule {
+		return &store.Rule{Enabled: true}
+	})
+
+	if !strings.Contains(from, rowOf("只接收的源")) || !strings.Contains(from, rowOf("两用的源")) {
+		t.Errorf("接收源栏应当列出用途含接收的源，实际：%s", from)
+	}
+	if strings.Contains(from, rowOf("只发送的源")) {
+		t.Error("只发送的源不该出现在接收源栏里")
+	}
+	if !strings.Contains(to, rowOf("只发送的源")) || !strings.Contains(to, rowOf("两用的源")) {
+		t.Errorf("目标源栏应当列出用途含发送的源，实际：%s", to)
+	}
+	if strings.Contains(to, rowOf("只接收的源")) {
+		t.Error("只接收的源不该出现在目标源栏里")
+	}
+
+	// 被藏起来的源要说一声，不然用户只会觉得「我的源怎么没了」。
+	if !strings.Contains(from, "另有 1 个源用途不含接收") {
+		t.Error("接收源栏应当说明有源因为用途不符没列出来")
+	}
+	if !strings.Contains(to, "另有 1 个源用途不含发送") {
+		t.Error("目标源栏应当说明有源因为用途不符没列出来")
+	}
+}
+
+// 已经选上的源即使用途变了也照样列出来（带警告），
+// 否则用户打开表单随手一存，规则里那个 ID 就被悄悄抹掉了。
+func TestRuleFormPickerKeepsUnusableSelection(t *testing.T) {
+	_, _, to := ruleFormWithSources(t, func(ids map[string]int64) *store.Rule {
+		// 目标源指向一个只接收的源：改用途之前建的老规则就长这样。
+		return &store.Rule{Enabled: true, ToSourceIDs: []int64{ids["只接收的源"]}}
+	})
+
+	id := pickerRowID(t, to, "to_source_ids", "只接收的源")
+	if !strings.Contains(to, `name="to_source_ids" value="`+id+`" checked`) {
+		t.Errorf("用途不合适的已选目标源也该回填成选中（源 id %s）", id)
+	}
+	if !strings.Contains(to, "用途不含发送") {
+		t.Error("用途不合适的已选目标源应当带上警告")
+	}
+	if strings.Contains(to, "另有") {
+		t.Error("已经列出来的源不该再算进「没列出来」的计数里")
+	}
+}
+
+// pickerRowID 从一栏的 HTML 里取某个源那一行的勾选框 value（也就是源 id）。
+func pickerRowID(t *testing.T, col, input, name string) string {
+	t.Helper()
+	start := strings.Index(col, rowOf(name))
+	if start < 0 {
+		t.Fatalf("%s 那一栏里没有 %s 这一行", input, name)
+	}
+	seg := col[start:]
+	if end := strings.Index(seg, "</label>"); end > 0 {
+		seg = seg[:end]
+	}
+	m := regexp.MustCompile(`name="` + input + `" value="(\d+)"`).FindStringSubmatch(seg)
+	if m == nil {
+		t.Fatalf("%s 那一行里没有 %s 的勾选框", name, input)
+	}
+	return m[1]
+}
+
+// 整栏不能套在一个大 <label> 里：按 HTML 规则，一个 label 只认它里面的第一个表单控件，
+// 于是点栏目标题、点列表空白都会去勾第一项（改之前在 Chrome 里实测到过）。
+func TestRuleFormHasNoNestedLabels(t *testing.T) {
+	body, from, to := ruleFormWithSources(t, func(map[string]int64) *store.Rule {
+		return &store.Rule{Enabled: true}
+	})
+
+	depth, max := 0, 0
+	for _, m := range regexp.MustCompile(`<label\b|</label>`).FindAllString(body, -1) {
+		if m == "</label>" {
+			depth--
+			continue
+		}
+		depth++
+		if depth > max {
+			max = depth
+		}
+	}
+	if max > 1 {
+		t.Errorf("规则表单里出现了嵌套的 label（最深 %d 层），点空白会误勾第一个控件", max)
+	}
+
+	// 每一行自己是个 label，且只包一个勾选框 —— 这样点整行才是「勾这一行」。
+	for _, col := range []string{from, to} {
+		rows := regexp.MustCompile(`(?s)<label class="pick".*?</label>`).FindAllString(col, -1)
+		if len(rows) == 0 {
+			t.Fatal("选源列表里没有找到可点的行")
+		}
+		for _, row := range rows {
+			if n := strings.Count(row, "<input"); n != 1 {
+				t.Errorf("每一行应当只包一个勾选框，实际 %d 个：%s", n, row)
+			}
+		}
+	}
+}

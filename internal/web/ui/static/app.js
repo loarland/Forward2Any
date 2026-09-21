@@ -424,6 +424,80 @@
     apply();
   })();
 
+  // 7) 规则表单的「选源」列表：搜索 + 全选/清空 + 实时计数。
+  //    勾选框本身就是普通控件，没有这段也能勾、也能提交；
+  //    工具条是先渲染成 hidden 再由这里放出来的（跟筛选条、文件框一个路子），
+  //    所以没 JS 时不会留下一排点了没反应的按钮。
+  document.querySelectorAll('[data-picker]').forEach(function (col) {
+    var rows = Array.prototype.slice.call(col.querySelectorAll('.pick'));
+    if (!rows.length) {
+      return;
+    }
+    var count = col.querySelector('[data-picker-count]');
+    var tools = col.querySelector('[data-picker-tools]');
+    var search = col.querySelector('[data-picker-search]');
+    var empty = col.querySelector('[data-picker-empty]');
+
+    function boxes() {
+      return rows.map(function (row) { return row.querySelector('input[type=checkbox]'); });
+    }
+    function syncCount() {
+      if (!count) {
+        return;
+      }
+      var n = boxes().filter(function (b) { return b.checked; }).length;
+      count.textContent = n ? '已选 ' + n + ' 个' : '未选择';
+      if (n) {
+        count.setAttribute('data-on', '1');
+      } else {
+        count.removeAttribute('data-on');
+      }
+    }
+    // 搜索框一敲就生效，和列表页的筛选条同一个套路：多个关键词是「都要出现」。
+    function applyFilter() {
+      var terms = (search ? search.value : '').toLowerCase().split(/\s+/).filter(Boolean);
+      var shown = 0;
+      rows.forEach(function (row) {
+        var hay = (row.getAttribute('data-search') || '').toLowerCase();
+        var ok = terms.every(function (t) { return hay.indexOf(t) >= 0; });
+        row.hidden = !ok;
+        if (ok) {
+          shown++;
+        }
+      });
+      if (empty) {
+        empty.hidden = shown > 0;
+      }
+    }
+    // 「全选」只作用于当前看得见的行：搜索之后它就等于「选中搜出来的这些」。
+    function setVisible(checked) {
+      rows.forEach(function (row) {
+        if (!row.hidden) {
+          row.querySelector('input[type=checkbox]').checked = checked;
+        }
+      });
+      syncCount();
+    }
+
+    var all = col.querySelector('[data-picker-all]');
+    var none = col.querySelector('[data-picker-none]');
+    if (all) {
+      all.addEventListener('click', function () { setVisible(true); });
+    }
+    if (none) {
+      none.addEventListener('click', function () { setVisible(false); });
+    }
+    if (tools) {
+      tools.hidden = false;
+    }
+    col.addEventListener('change', syncCount);
+    if (search) {
+      search.addEventListener('input', applyFilter);
+    }
+    applyFilter();
+    syncCount();
+  });
+
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');
     ta.value = text;

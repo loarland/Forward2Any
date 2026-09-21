@@ -306,6 +306,63 @@ grep -q '{{.Payload.action}}' "$WORK/rule_err.html" || fail "校验失败后报�
 grep -q '这一行是坏的' "$WORK/rule_err.html" || fail "校验失败后用户写的过滤文本被丢掉了"
 pass "规则表单校验失败后会整张回填"
 
+# 「选源」两栏：只列用途对得上的源，并且整栏不能套在一个大 <label> 里 ——
+# 按 HTML 规则一个 label 只认它里面第一个控件，那样点栏目标题、点列表空白都会去勾第一项
+# （这个误勾在 Chrome 里实测到过，所以这里拿嵌套层数兜住它）。
+python3 - "$WORK/rule_edit.html" <<'PICKER'
+import re
+import sys
+
+html = open(sys.argv[1]).read()
+bad = []
+start, mid = html.find('data-picker="from"'), html.find('data-picker="to"')
+if start < 0 or mid < start:
+    bad.append('页面里没有找到两栏选源列表')
+    frm = to = ''
+else:
+    frm, to = html[start:mid], html[mid:]
+
+
+def row(name):
+    """行定位串。带结尾空格是为了只匹配这一行的 data-search，而不是别处的源名。"""
+    return 'data-search="%s ' % name
+
+
+# 这个实例里「GitHub 接收」只接收、「Mock 目标」只发送
+if row('GitHub 接收') not in frm:
+    bad.append('接收源栏没列出「GitHub 接收」')
+if row('Mock 目标') in frm:
+    bad.append('只发送的源出现在接收源栏里')
+if row('Mock 目标') not in to:
+    bad.append('目标源栏没列出「Mock 目标」')
+if row('GitHub 接收') in to:
+    bad.append('只接收的源出现在目标源栏里')
+# 被藏起来的源要说一声，不然用户只会觉得「我的源怎么没了」
+if '另有 1 个源用途不含接收' not in frm:
+    bad.append('接收源栏没说明有源因为用途不符没列出来')
+if '另有 1 个源用途不含发送' not in to:
+    bad.append('目标源栏没说明有源因为用途不符没列出来')
+
+for col in (frm, to):
+    for r in re.findall(r'(?s)<label class="pick".*?</label>', col):
+        if r.count('<input') != 1:
+            bad.append('一行里包了 %d 个控件：%s' % (r.count('<input'), r[:60]))
+        if '<label' in r[len('<label'):]:
+            bad.append('选源行里出现了嵌套 label')
+
+depth = mx = 0
+for m in re.findall(r'<label\b|</label>', html):
+    depth += 1 if m == '<label' else -1
+    mx = max(mx, depth)
+if mx > 1:
+    bad.append('规则表单里有嵌套的 label（最深 %d 层）' % mx)
+
+if bad:
+    print('\n'.join('  - ' + b for b in bad), file=sys.stderr)
+    sys.exit(1)
+PICKER
+pass "规则表单的选源两栏按用途过滤，且没有嵌套 label"
+
 # 列表页的筛选条：源和规则是客户端筛选（列表已在页面里），投递日志是服务端筛选。
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$WORK/sources_list.html"
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules" > "$WORK/rules_list.html"

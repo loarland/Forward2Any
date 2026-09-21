@@ -62,6 +62,11 @@
   --use-in-bg:   color-mix(in srgb, var(--use-in)   10%, var(--panel));
   --use-out-bg:  color-mix(in srgb, var(--use-out)  10%, var(--panel));
   --use-both-bg: color-mix(in srgb, var(--use-both) 10%, var(--panel));
+  /* 标签上的文字：跟 --accent-text 一个办法，往 --pico-contrast 混，
+     亮色底变深、暗色底变浅，两种主题下都读得清 */
+  --use-in-text:   color-mix(in srgb, var(--use-in)   72%, var(--pico-contrast));
+  --use-out-text:  color-mix(in srgb, var(--use-out)  72%, var(--pico-contrast));
+  --use-both-text: color-mix(in srgb, var(--use-both) 72%, var(--pico-contrast));
 
   /* ---------- 状态色：色相固定，明度跟主题 ----------
      不用 Pico 的 --pico-ins-color / --pico-del-color：那两个是给 <ins>/<del> 用的，

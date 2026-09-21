@@ -194,6 +194,14 @@ curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules" > "$WORK/rules.html"
 grep -q "转发到 mock" "$WORK/rules.html" || fail "规则没有创建成功"
 pass "规则已创建（容器名寻址的目标源）"
 
+# 选源两栏：只列用途对得上的源。不筛的话两栏各 2 行，筛完一共 2 行。
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/rules/1/edit" > "$WORK/rule_edit.html"
+grep -q 'id="pick-from"' "$WORK/rule_edit.html" || fail "规则表单缺少接收源栏"
+grep -q 'id="pick-to"' "$WORK/rule_edit.html" || fail "规则表单缺少目标源栏"
+rows=$(grep -o 'class="pick"' "$WORK/rule_edit.html" | wc -l | tr -d ' ')
+[ "$rows" = "2" ] || fail "两个源应当各出现在一栏里（共 2 行），实际 $rows 行"
+pass "规则表单的选源两栏按用途分开列（各 1 行，不是 4 行）"
+
 echo
 echo "== 容器内转发链路 =="
 code=$(curl -s -o "$WORK/hook.out" -w '%{http_code}' -X POST \

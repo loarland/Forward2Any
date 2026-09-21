@@ -447,6 +447,10 @@ button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-colo
 .tag.dropped { background: var(--neutral-bg); color: var(--neutral-text); }
 .tag.on { background: var(--ok-bg); color: var(--ok-text); }
 .tag.off { background: var(--neutral-bg); color: var(--muted); }
+/* 用途标签沿用源卡片那套语义色，扫一眼就知道哪个是入口、哪个是出口 */
+.tag.usage-in { background: var(--use-in-bg); color: var(--use-in-text); }
+.tag.usage-out { background: var(--use-out-bg); color: var(--use-out-text); }
+.tag.usage-both { background: var(--use-both-bg); color: var(--use-both-text); }
 
 pre.body {
   background: var(--surface-2);
@@ -476,5 +480,71 @@ pre.body {
 
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 13px; }
 
-.picker { max-height: 210px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 6px; padding: 8px 10px; }
-.picker label { margin-bottom: 4px; font-size: 13px; }
+/* ---------- 规则表单里的「选源」列表 ----------
+   两栏长得一样，只是内容不同，所以样式全部挂在 .picker-col 这一层。
+   每条是一个整行可点的卡片（.pick），选中状态用 :has() 高亮 ——
+   即使没有 JS（计数、搜索、全选都不工作）也能一眼看出勾了哪些。 */
+.picker-col { display: flex; flex-direction: column; }
+
+.picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.picker-title { font-size: 14px; font-weight: 600; }
+.picker-count { font-size: 12px; color: var(--muted); }
+.picker-count[data-on] { color: var(--accent-text); font-weight: 600; }
+
+.picker-hint { margin: 2px 0 8px; font-size: 12px; color: var(--muted); }
+
+.picker-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.picker-tools input[type=search] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 12.5px;
+}
+.picker-tools .btn { margin: 0; flex: 0 0 auto; }
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 246px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+/* Pico 给 label 加了 margin 和字重，这里每一项都要重新压一遍 */
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.pick:hover { background: var(--row-hover); }
+.pick:has(input:checked) { background: var(--accent-soft); border-color: var(--accent-line); }
+.pick:has(input:focus-visible) { box-shadow: 0 0 0 3px var(--focus-ring); }
+.pick input[type=checkbox] { margin: 0; flex: 0 0 auto; }
+
+/* 勾选框和文字并排；名字短时标签靠右，看起来是一列 */
+.pick-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pick-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pick-name { margin-right: auto; font-weight: 500; overflow-wrap: anywhere; }
+.pick-line .tag { font-size: 11px; padding: 0 7px; }
+.pick-warn { font-size: 11.5px; color: var(--warn-text); }
+
+.picker-empty { padding: 14px 10px; font-size: 12.5px; text-align: center; }
+.picker-hidden { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); }
+
+@media (max-width: 720px) {
+  /* 窄屏两栏会叠起来，grid2 的行间距是 0，这里补一点 */
+  .picker-col + .picker-col { margin-top: 18px; }
+}

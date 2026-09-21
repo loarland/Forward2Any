@@ -88,17 +88,82 @@ func (s *Server) renderRuleForm(w http.ResponseWriter, r *http.Request, rule *st
 		s.fail(w, "读取源列表失败", err)
 		return
 	}
+	from, fromHidden := pickOptions(sources, idSet(rule.FromSourceIDs), "from")
+	to, toHidden := pickOptions(sources, idSet(rule.ToSourceIDs), "to")
 	s.render(w, r, "rule_form", map[string]any{
-		"Title":      "规则",
-		"Nav":        "rules",
-		"Rule":       rule,
-		"IsNew":      rule.ID == 0,
-		"Sources":    sources,
-		"FromSet":    idSet(rule.FromSourceIDs),
-		"ToSet":      idSet(rule.ToSourceIDs),
+		"Title": "规则",
+		"Nav":   "rules",
+		"Rule":  rule,
+		"IsNew": rule.ID == 0,
+		// 两栏只有名字和选项不同，所以做成同一张牌的两面，模板里共用一段 markup。
+		"Pickers": []rulePicker{
+			{
+				Role: "from", Input: "from_source_ids", Title: "接收源", RoleText: "接收",
+				Hint: "这些源收到消息时触发本规则", Options: from, Hidden: fromHidden, Count: len(rule.FromSourceIDs),
+			},
+			{
+				Role: "to", Input: "to_source_ids", Title: "目标源", RoleText: "发送",
+				Hint: "消息会被转发到这些源", Options: to, Hidden: toHidden, Count: len(rule.ToSourceIDs),
+			},
+		},
+		"NoSource":   len(sources) == 0,
 		"FilterText": filterText,
 		"Error":      errMsg,
 	})
+}
+
+// rulePicker 是规则表单里「选源」的一栏。
+type rulePicker struct {
+	Role     string // from / to，同时当 DOM 的 data 属性和 id 用
+	Input    string // 勾选框的 name，也就是提交时的字段名
+	Title    string
+	RoleText string // 「接收」/「发送」，拼提示语用
+	Hint     string
+	Options  []ruleSourceOption
+	Hidden   int // 因为用途不合适、没列出来的源数量
+	Count    int // 已选数量：渲染时给个初值，之后由 JS 维护
+}
+
+// ruleSourceOption 是「选源」列表里的一项。
+type ruleSourceOption struct {
+	*store.Source
+	Checked bool
+	// Eligible 表示这个源现在的用途能不能担任这一侧的角色。
+	// 不能的默认不列出来，但已经选中的仍然要显示（带一句警告）——
+	// 否则用户打开表单随手一保存，规则里那个 ID 就被悄悄抹掉了。
+	Eligible bool
+	Warn     string
+}
+
+// pickOptions 挑出这一栏要列的源，外加被藏起来的数量。
+//
+// 依据跟服务端实际执行时的那套判断一致：接收侧认 CanReceive（hook 对非接收用途的源直接 404，
+// 邮件源也不会被轮询），发送侧认 CanSend（引擎对不能发送的目标源会跳过并记一条警告）。
+func pickOptions(sources []*store.Source, chosen map[int64]bool, role string) ([]ruleSourceOption, int) {
+	send := role == "to"
+	// 用途不合适的源排在前面：它是这一栏里唯一需要用户动手处理的一项。
+	var bad, ok []ruleSourceOption
+	hidden := 0
+	for _, src := range sources {
+		eligible := src.CanReceive()
+		warn := "用途不含接收，收到消息也不会触发本规则"
+		if send {
+			eligible = src.CanSend()
+			warn = "用途不含发送，转发到它时会被跳过"
+		}
+		if !eligible && !chosen[src.ID] {
+			hidden++
+			continue
+		}
+		opt := ruleSourceOption{Source: src, Checked: chosen[src.ID], Eligible: eligible}
+		if !eligible {
+			opt.Warn = warn
+			bad = append(bad, opt)
+			continue
+		}
+		ok = append(ok, opt)
+	}
+	return append(bad, ok...), hidden
 }
 
 func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request) {
