@@ -570,13 +570,23 @@ curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/proxy-set.html"
 grep -q 'value="127.0.0.1:'"$PROXY_PORT"'"' "$WORK/proxy-set.html" || fail "设置页没有回填已保存的代理地址"
 pass "设置页能选 HTTP / HTTPS / SOCKS5，保存后回填正常"
 
-# 跨站写请求：默认按 IP:端口 访问就能用（Origin 与 Host 一致），
-# 反向代理改写了 Host 的场景靠设置页那一栏放行 —— 这是用户实际踩到的 403。
+# 跨站写请求：开关 + 允许列表。默认按 IP:端口 访问就能用（Origin 与 Host 一致），
+# 反向代理改写了 Host 的场景靠允许列表放行 —— 这是用户实际踩到的 403。
 echo
-echo "== 跨站写请求与信任来源 =="
-curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/trusted-empty.html"
-grep -q 'name="trusted_origins"' "$WORK/trusted-empty.html" || fail "设置页没有「信任的 Origin / Referer」那一栏"
-pass "设置页有「信任的 Origin / Referer」一栏"
+echo "== 跨站写请求校验与允许列表 =="
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/origin-empty.html"
+grep -q 'name="origin_check"' "$WORK/origin-empty.html" || fail "设置页没有来源校验开关"
+grep -q 'name="origin_check" value="1"' "$WORK/origin-empty.html" || fail "开关的复选框没有值"
+grep -q 'name="origin_check" value="0"' "$WORK/origin-empty.html" || fail "开关没有配 hidden（取消勾选读不到值）"
+grep -q 'name="trusted_origins"' "$WORK/origin-empty.html" || fail "设置页没有允许列表那一栏"
+grep -q 'type="checkbox" role="switch" id="origin_check"' "$WORK/origin-empty.html" || fail "开关不是 switch 样式"
+python3 - "$WORK/origin-empty.html" <<'PYEOF' || fail "开关默认应当是开启的"
+import re, sys
+html = open(sys.argv[1], encoding='utf-8').read()
+tag = re.search(r'<input[^>]*id="origin_check"[^>]*>', html).group(0)
+sys.exit(0 if 'checked' in tag else 1)
+PYEOF
+pass "设置页有来源校验开关（默认开启）与允许列表"
 
 # 带 Origin 的写请求：模拟浏览器从域名访问、而代理把 Host 改成了 127.0.0.1:端口。
 # 表单本身是合法的（只少填可选项，处理器会沿用已存的值），这样 200 只可能来自校验失败，
@@ -588,7 +598,7 @@ cross_code() {
     "$BASE/settings"
 }
 code=$(cross_code "https://hooks.example.com")
-[ "$code" = "403" ] || fail "Host 被改写且没配信任来源时应当 403，实际 $code"
+[ "$code" = "403" ] || fail "Host 被改写且没配允许列表时应当 403，实际 $code"
 grep -q "跨站请求被拒绝" "$WORK/cross.out" || fail "403 页面没说清原因：$(head -c 200 "$WORK/cross.out")"
 pass "Host 被代理改写时域名来源被拒（403，页面带原因）"
 
@@ -596,27 +606,43 @@ code=$(cross_code "$BASE")
 [ "$code" = "303" ] || fail "同源（IP:端口）写请求应当照常执行，实际 $code"
 pass "IP:端口 同源写请求不受影响"
 
+# 允许列表：逗号分隔、只写主机名（协议不限）
 post_form \
   --data-urlencode "web_port=$APP_PORT" \
   --data-urlencode "base_url=$BASE" \
   --data-urlencode "admin_user=$ADMIN_USER" \
-  --data-urlencode "trusted_origins=hooks.example.com" \
+  --data-urlencode "trusted_origins=https://hooks.example.com, admin.example.com" \
   "$BASE/settings"
-curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/trusted-set.html"
-grep -q 'hooks.example.com' "$WORK/trusted-set.html" || fail "信任来源没有回填到设置页"
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/origin-set.html"
+grep -q 'https://hooks.example.com' "$WORK/origin-set.html" || fail "允许列表没有回填到设置页"
+grep -q 'admin.example.com' "$WORK/origin-set.html" || fail "逗号分隔的第二条没有存下来"
 code=$(cross_code "https://hooks.example.com")
-[ "$code" = "303" ] || fail "加了信任来源之后应当放行，实际 $code"
-pass "填进信任来源后，同一来源的写请求放行"
+[ "$code" = "303" ] || fail "写了完整地址的那条应当放行，实际 $code"
+code=$(cross_code "http://admin.example.com")
+[ "$code" = "303" ] || fail "只写主机名的那条应当不限协议，实际 $code"
+pass "允许列表：完整地址按协议匹配，只写主机名则不限协议"
 
 code=$(cross_code "https://evil.example")
-[ "$code" = "403" ] || fail "不在信任来源里的站点仍应 403，实际 $code"
-pass "不在信任来源里的站点照样 403"
+[ "$code" = "403" ] || fail "不在允许列表里的站点仍应 403，实际 $code"
+pass "不在允许列表里的站点照样 403"
 
-# 清掉，别影响后面的用例
+# 关掉开关：来源不再校验（SameSite 仍兜着）
 post_form \
   --data-urlencode "web_port=$APP_PORT" \
   --data-urlencode "base_url=$BASE" \
   --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "origin_check=0" \
+  "$BASE/settings"
+code=$(cross_code "https://evil.example")
+[ "$code" = "303" ] || fail "关掉开关后不该再挡来源，实际 $code"
+pass "关掉开关后不再校验来源"
+
+# 复原：开关打开、清空允许列表，别影响后面的用例
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "origin_check=1" \
   --data-urlencode "trusted_origins=" \
   "$BASE/settings"
 

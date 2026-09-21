@@ -70,13 +70,17 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// 信任来源和代理一样，只在表单确实提交了它时才动：只提交部分字段的请求
 	// 不该把已有的白名单抹掉。存的是规整后的主机名，看不懂的行直接挡回去，不静默丢掉。
 	if _, ok := r.PostForm["trusted_origins"]; ok {
-		trusted, badTrusted := parseTrustedOrigins(formValue(r, "trusted_origins"))
+		trusted, badTrusted := parseAllowedOrigins(formValue(r, "trusted_origins"))
 		if len(badTrusted) > 0 {
-			s.renderSettings(w, r, "信任的 Origin / Referer 里这几行看不懂："+strings.Join(badTrusted, "、")+
-				"。写主机名就行，例如 hooks.example.com 或 https://hooks.example.com", "")
+			s.renderSettings(w, r, "允许列表里这几条看不懂："+strings.Join(badTrusted, "、")+
+				"。写主机名或完整地址都行，例如 https://hooks.example.com", "")
 			return
 		}
-		next.TrustedOrigins = strings.Join(trusted, "\n")
+		next.TrustedOrigins = formatAllowedOrigins(trusted)
+	}
+	// 开关：模板里复选框后面跟了个 hidden 的 "0"，所以未勾选时也能读到明确的值。
+	if _, ok := r.PostForm["origin_check"]; ok {
+		next.OriginCheck = r.PostFormValue("origin_check") == "1"
 	}
 	next.RetryMax = formInt(r, "retry_max", current.RetryMax)
 	next.RetryBackoffSeconds = formInt(r, "retry_backoff_seconds", current.RetryBackoffSeconds)
@@ -142,8 +146,8 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	// 换配色/亮暗同样立刻生效，不用重启进程。
 	s.refreshTheme()
-	// 回调基址或信任来源可能改了，跨站校验认的主机名跟着更新。
-	s.refreshTrustedHosts()
+	// 回调基址、开关或允许列表可能改了，跨站校验策略跟着更新。
+	s.refreshOriginPolicy()
 	s.log.Info("更新设置", "端口", next.WebPort, "管理员", next.AdminUser)
 
 	if next.WebPort != oldPort {

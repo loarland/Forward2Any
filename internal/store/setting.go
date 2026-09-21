@@ -35,6 +35,7 @@ const (
 	KeyProxyType           = "proxy_type"
 	KeyProxyAddr           = "proxy_addr"
 	KeyTrustedOrigins      = "trusted_origins"
+	KeyOriginCheck         = "origin_check"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -52,7 +53,8 @@ type Settings struct {
 	ThemeMode           string // auto / light / dark
 	ProxyType           string // none / http / https / socks5
 	ProxyAddr           string // host:port，可带 用户名:密码@
-	TrustedOrigins      string // 每行一个主机名，写请求的 Origin/Referer 白名单
+	TrustedOrigins      string // 允许列表，逗号或换行分隔
+	OriginCheck         bool   // 是否校验写请求的 Origin/Referer
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -72,6 +74,7 @@ func DefaultSettings() *Settings {
 		ProxyType:           "none",
 		ProxyAddr:           "",
 		TrustedOrigins:      "",
+		OriginCheck:         true,
 	}
 }
 
@@ -112,6 +115,7 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyProxyType, exist.ProxyType)
 	setIfMissing(KeyProxyAddr, exist.ProxyAddr)
 	setIfMissing(KeyTrustedOrigins, exist.TrustedOrigins)
+	setIfMissing(KeyOriginCheck, boolStr(exist.OriginCheck))
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -164,6 +168,7 @@ func (s *Store) Settings() (*Settings, error) {
 	d.ProxyType = get(KeyProxyType, d.ProxyType)
 	d.ProxyAddr = get(KeyProxyAddr, d.ProxyAddr)
 	d.TrustedOrigins = get(KeyTrustedOrigins, d.TrustedOrigins)
+	d.OriginCheck = get(KeyOriginCheck, "1") == "1"
 	d.raw = raw
 	return d, nil
 }
@@ -244,6 +249,7 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyProxyType:           v.ProxyType,
 		KeyProxyAddr:           v.ProxyAddr,
 		KeyTrustedOrigins:      v.TrustedOrigins,
+		KeyOriginCheck:         boolStr(v.OriginCheck),
 	})
 }
 

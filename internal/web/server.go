@@ -37,9 +37,10 @@ type Server struct {
 	// theme 缓存当前外观（配色 + 亮暗）。同样是为了免掉每个请求一次查库。
 	theme atomic.Value
 
-	// trustedHosts 缓存跨站校验认的主机名（回调基址 + 设置里的信任列表）。
-	// 每个写请求都要看，所以同样不能每次查库。
-	trustedHosts atomic.Value
+	// originCheck / allowedOrigins 是跨站校验的策略缓存（开关 + 允许列表，
+	// 含「回调基址」那一条）。每个写请求都要看，所以同样不能每次查库。
+	originCheckOff atomic.Bool
+	allowedOrigins atomic.Value
 
 	mu   sync.Mutex
 	srv  *http.Server
@@ -58,30 +59,40 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 	}
 	s.refreshPassFlag()
 	s.refreshTheme()
-	s.refreshTrustedHosts()
+	s.refreshOriginPolicy()
 	return s
 }
 
-// refreshTrustedHosts 缓存跨站校验认的主机名：回调基址里的主机 + 设置里列的信任来源。
-// 启动时和保存设置之后各调一次。
-func (s *Server) refreshTrustedHosts() {
-	hosts := []string{}
+// refreshOriginPolicy 缓存跨站校验的策略：开关 + 允许列表。
+// 允许列表里额外带上「回调基址」的主机名（不限协议）—— 那是管理员自己声明的公开地址，
+// 让它开箱可用，省得同一个域名要填两遍。启动时和保存设置之后各调一次。
+func (s *Server) refreshOriginPolicy() {
+	enabled := true
+	list := []allowedOrigin{}
 	settings, err := s.store.Settings()
 	if err != nil {
-		s.log.Error("读取设置失败，跨站校验只认请求上的 Host", "err", err)
+		s.log.Error("读取设置失败，跨站校验先用默认策略", "err", err)
 	} else {
+		enabled = settings.OriginCheck
 		if u, err := url.Parse(settings.BaseURL); err == nil && u.Host != "" {
-			hosts = append(hosts, u.Host)
+			list = append(list, allowedOrigin{host: normalizeHost(u.Host)})
 		}
-		list, _ := parseTrustedOrigins(settings.TrustedOrigins)
-		hosts = append(hosts, list...)
+		extra, _ := parseAllowedOrigins(settings.TrustedOrigins)
+		list = append(list, extra...)
 	}
-	s.trustedHosts.Store(hosts)
+	s.originCheckOff.Store(!enabled)
+	s.allowedOrigins.Store(list)
 }
 
-// trustedHostList 取缓存里的额外主机名，没有就是空表（此时只认请求上的 Host）。
-func (s *Server) trustedHostList() []string {
-	if v, ok := s.trustedHosts.Load().([]string); ok {
+// originCheckOn 取缓存的开关状态。缓存的是「关掉了没」，零值即开启 ——
+// 还没读过设置（比如单测里裸构造的 Server）时也保持校验，别默认裸奔。
+func (s *Server) originCheckOn() bool {
+	return !s.originCheckOff.Load()
+}
+
+// allowedOriginList 取缓存里的允许列表。
+func (s *Server) allowedOriginList() []allowedOrigin {
+	if v, ok := s.allowedOrigins.Load().([]allowedOrigin); ok {
 		return v
 	}
 	return nil

@@ -356,96 +356,110 @@ func TestValidateSourceShape(t *testing.T) {
 	}
 }
 
-func TestSameOrigin(t *testing.T) {
-	get := httptest.NewRequest("GET", "http://example.com/settings", nil)
-	if !sameOrigin(get) {
+func TestOriginMatches(t *testing.T) {
+	allow := func(items ...string) []allowedOrigin {
+		list, bad := parseAllowedOrigins(strings.Join(items, "\n"))
+		if len(bad) > 0 {
+			t.Fatalf("测试数据本身解析不了：%v", bad)
+		}
+		return list
+	}
+	// host 是「本服务看到的地址」，origin 是浏览器发来的来源。
+	ask := func(method, host, origin string, list []allowedOrigin) bool {
+		var r *http.Request
+		if method == "GET" {
+			r = httptest.NewRequest("GET", "http://"+host+"/login", nil)
+		} else {
+			r = httptest.NewRequest("POST", "http://"+host+"/login", nil)
+		}
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		return originMatches(r, list)
+	}
+
+	if !ask("GET", "example.com", "http://evil.example", nil) {
 		t.Error("GET 不做来源校验")
 	}
-
-	// 非浏览器客户端不带 Origin/Referer
-	script := httptest.NewRequest("POST", "http://example.com/settings", nil)
-	if !sameOrigin(script) {
-		t.Error("没有 Origin/Referer 的请求应当放行")
+	if !ask("POST", "example.com", "", nil) {
+		t.Error("没有 Origin/Referer 的请求（curl、脚本）应当放行")
 	}
-
-	same := httptest.NewRequest("POST", "http://example.com/settings", nil)
-	same.Header.Set("Origin", "http://example.com")
-	if !sameOrigin(same) {
+	if !ask("POST", "example.com", "http://example.com", nil) {
 		t.Error("同源请求应当放行")
 	}
-
-	cross := httptest.NewRequest("POST", "http://example.com/settings", nil)
-	cross.Header.Set("Origin", "http://evil.example")
-	if sameOrigin(cross) {
+	if ask("POST", "example.com", "http://evil.example", nil) {
 		t.Error("跨站请求应当被拒绝")
 	}
 
-	referer := httptest.NewRequest("POST", "http://example.com/settings", nil)
-	referer.Header.Set("Referer", "http://evil.example/x")
-	if sameOrigin(referer) {
-		t.Error("跨站 Referer 应当被拒绝")
+	// 反向代理把 Host 改成上游地址（127.0.0.1:16000）时的三条出路。
+	proxied := func(origin string, list []allowedOrigin) bool {
+		return ask("POST", "127.0.0.1:16000", origin, list)
+	}
+	if proxied("https://hooks.example.com", nil) {
+		t.Error("没配允许列表时应当拒绝")
+	}
+	if !proxied("https://hooks.example.com", allow("https://hooks.example.com")) {
+		t.Error("允许列表里的完整地址应当放行")
+	}
+	if !proxied("https://hooks.example.com", allow("hooks.example.com")) {
+		t.Error("只写主机名时协议不限，应当放行")
+	}
+	if proxied("http://hooks.example.com", allow("https://hooks.example.com")) {
+		t.Error("写了 https:// 就只认 https")
+	}
+	if proxied("https://evil.example", allow("https://hooks.example.com")) {
+		t.Error("不在列表里的站点仍然要拒绝")
 	}
 
-	// 反向代理把 Host 改写成上游地址时的两条出路：代理转发的原始 Host、设置里列的信任来源。
-	proxied := httptest.NewRequest("POST", "http://127.0.0.1:16000/login", nil)
-	proxied.Header.Set("Origin", "https://hooks.example.com")
-	if sameOrigin(proxied) {
-		t.Error("Host 被改写又没配信任来源时应当拒绝")
-	}
-	if !sameOrigin(proxied, "hooks.example.com") {
-		t.Error("信任来源里的主机应当放行")
-	}
-	// 用户写成完整 URL 也没关系：设置页会先解析成主机名再进候选表。
-	fromURL, _ := parseTrustedOrigins("https://hooks.example.com")
-	if !sameOrigin(proxied, fromURL...) {
-		t.Error("信任来源写成完整 URL 时也应当放行")
-	}
-	if sameOrigin(proxied, "other.example.com") {
-		t.Error("不在信任来源里的主机仍然要拒绝")
-	}
-
-	// 默认端口是纯写法差异，不算跨站；非默认端口是另一个源，不能混。
-	portNormalized := httptest.NewRequest("POST", "http://example.com:80/settings", nil)
-	portNormalized.Header.Set("Origin", "http://example.com")
-	if !sameOrigin(portNormalized) {
+	// 默认端口是纯写法差异；非默认端口是另一个源。
+	if !ask("POST", "example.com:80", "http://example.com", nil) {
 		t.Error(":80 与不带端口应当视为同一个源")
 	}
-	otherPort := httptest.NewRequest("POST", "http://example.com/settings", nil)
-	otherPort.Header.Set("Origin", "http://example.com:8443")
-	if sameOrigin(otherPort) {
+	if ask("POST", "example.com", "http://example.com:8443", nil) {
 		t.Error("非默认端口是另一个源，应当拒绝")
 	}
-	if !sameOrigin(otherPort, "example.com:8443") {
-		t.Error("把带端口的主机列进信任来源后应当放行")
+	if !ask("POST", "example.com", "http://example.com:8443", allow("example.com:8443")) {
+		t.Error("把带端口的主机列进允许列表后应当放行")
 	}
 }
 
-// parseTrustedOrigins 是设置页那一栏的解析器：用户写什么形式都该认得，写错的行要能报出来。
-func TestParseTrustedOrigins(t *testing.T) {
-	hosts, bad := parseTrustedOrigins(strings.Join([]string{
-		"hooks.example.com",
-		"  Hooks.Example.com  ",      // 大小写和空白：同一台，去重
-		"https://admin.example.com/", // 带协议和路径
-		"http://example.net:8080/prefix",
-		"https://hooks.example.com:443", // 默认端口归一化后和第一条重复
-		"",
-	}, "\n"))
-	want := []string{"hooks.example.com", "admin.example.com", "example.net:8080"}
-	if len(hosts) != len(want) {
-		t.Fatalf("解析出 %v，期望 %v", hosts, want)
+// 允许列表那一栏：逗号或换行分隔都认，形式写全写简都行，看不懂的条目要能报出来。
+func TestParseAllowedOrigins(t *testing.T) {
+	list, bad := parseAllowedOrigins("hooks.example.com, https://admin.example.com/, " +
+		"http://example.net:8080/prefix\nhttps://hooks.example.com:443")
+	if len(bad) != 0 {
+		t.Fatalf("不该有看不懂的条目，实际 %v", bad)
+	}
+	want := []allowedOrigin{
+		{host: "hooks.example.com"},
+		{scheme: "https", host: "admin.example.com"},
+		{scheme: "http", host: "example.net:8080"},
+		{scheme: "https", host: "hooks.example.com"},
+	}
+	if len(list) != len(want) {
+		t.Fatalf("解析出 %v，期望 %v", list, want)
 	}
 	for i := range want {
-		if hosts[i] != want[i] {
-			t.Errorf("第 %d 个是 %q，期望 %q", i, hosts[i], want[i])
+		if list[i] != want[i] {
+			t.Errorf("第 %d 条是 %+v，期望 %+v", i, list[i], want[i])
 		}
 	}
-	if len(bad) != 0 {
-		t.Errorf("不该有看不懂的行，实际 %v", bad)
+
+	// 去重：同一个来源写两遍只留一条；带默认端口的和默认端口归一化后重复。
+	list, _ = parseAllowedOrigins("hooks.example.com\nHooks.Example.com\nhttps://hooks.example.com:443")
+	if len(list) != 2 {
+		t.Errorf("应当只留「不限协议」和「https」两条，实际 %v", list)
 	}
 
-	_, bad = parseTrustedOrigins("hooks.example.com\n这不是域名\nhttp://")
+	_, bad = parseAllowedOrigins("hooks.example.com, 这不是域名, ftp://example.com")
 	if len(bad) != 2 {
-		t.Errorf("应当认出 2 行垃圾，实际 %v", bad)
+		t.Errorf("应当认出 2 条垃圾，实际 %v", bad)
+	}
+
+	// 回填格式：带协议的原样带上，一行一条。
+	back := formatAllowedOrigins([]allowedOrigin{{scheme: "https", host: "a.example"}, {host: "b.example"}})
+	if back != "https://a.example\nb.example" {
+		t.Errorf("回填成了 %q", back)
 	}
 }
 
@@ -466,9 +480,9 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
-// 端到端一点：设置里存了信任来源之后，guard 要放行从那个域名发来的写请求；
-// 没配的时候 Host 被代理改写就要挡下（这正是用户报的那个 403）。
-func TestGuardAcceptsConfiguredTrustedOrigin(t *testing.T) {
+// 端到端一点：guard 在「开关 + 允许列表」下的行为。
+// 这正是用户报的那个 403 —— 代理改写 Host 之后，从域名来的写请求没人放行。
+func TestGuardOriginPolicy(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -478,39 +492,65 @@ func TestGuardAcceptsConfiguredTrustedOrigin(t *testing.T) {
 	if err := st.SetSettings(map[string]string{
 		store.KeyBaseURL:        "http://localhost:16000",
 		store.KeyTrustedOrigins: "",
+		store.KeyOriginCheck:    "1",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s.refreshTrustedHosts()
+	s.refreshOriginPolicy()
 
-	post := func(origin string) *httptest.ResponseRecorder {
-		body := strings.NewReader("")
-		req := httptest.NewRequest("POST", "http://127.0.0.1:16000/login", body)
-		req.Header.Set("Origin", origin)
+	post := func(origin string) int {
+		req := httptest.NewRequest("POST", "http://127.0.0.1:16000/login", strings.NewReader(""))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
 		rec := httptest.NewRecorder()
 		s.guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})).ServeHTTP(rec, req)
-		return rec
+		return rec.Code
 	}
 
-	// IP:端口 直接访问：Origin 和 Host 一致，默认就能用（用户能先进后台去配置）。
-	if code := post("http://127.0.0.1:16000").Code; code != http.StatusOK {
+	// IP:端口 直接访问：Origin 和 Host 一致，默认就能进后台去配置。
+	if code := post("http://127.0.0.1:16000"); code != http.StatusOK {
 		t.Errorf("IP:端口 直接访问应当放行，实际 %d", code)
 	}
-	// 代理改写 Host：没配信任来源就是 403，配了才放行。
-	if code := post("https://hooks.example.com").Code; code != http.StatusForbidden {
-		t.Errorf("Host 被改写且没配信任来源时应当 403，实际 %d", code)
+	// 代理改写 Host：没配允许列表就是 403。
+	if code := post("https://hooks.example.com"); code != http.StatusForbidden {
+		t.Errorf("Host 被改写且没配允许列表时应当 403，实际 %d", code)
 	}
-	if err := st.SetSettings(map[string]string{store.KeyTrustedOrigins: "hooks.example.com"}); err != nil {
+	// 填进允许列表（顺带验证逗号分隔与完整地址两种写法）之后放行。
+	if err := st.SetSettings(map[string]string{
+		store.KeyTrustedOrigins: "https://hooks.example.com, admin.example.com",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	s.refreshTrustedHosts()
-	if code := post("https://hooks.example.com").Code; code != http.StatusOK {
-		t.Errorf("配了信任来源之后应当放行，实际 %d", code)
+	s.refreshOriginPolicy()
+	if code := post("https://hooks.example.com"); code != http.StatusOK {
+		t.Errorf("配了允许列表之后应当放行，实际 %d", code)
 	}
-	if code := post("https://evil.example").Code; code != http.StatusForbidden {
+	if code := post("http://admin.example.com"); code != http.StatusOK {
+		t.Errorf("只写主机名的那条应当不限协议，实际 %d", code)
+	}
+	if code := post("https://evil.example"); code != http.StatusForbidden {
 		t.Errorf("别的站点仍然要 403，实际 %d", code)
+	}
+	// 关掉开关：一律放行。
+	if err := st.SetSettings(map[string]string{store.KeyOriginCheck: "0"}); err != nil {
+		t.Fatal(err)
+	}
+	s.refreshOriginPolicy()
+	if code := post("https://evil.example"); code != http.StatusOK {
+		t.Errorf("关掉开关之后不该再挡来源，实际 %d", code)
+	}
+	// 回调基址里的主机名默认就认（不限协议）。
+	if err := st.SetSettings(map[string]string{
+		store.KeyOriginCheck: "1", store.KeyBaseURL: "https://public.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.refreshOriginPolicy()
+	if code := post("https://public.example"); code != http.StatusOK {
+		t.Errorf("回调基址的主机名应当默认放行，实际 %d", code)
 	}
 }
 
@@ -1006,7 +1046,7 @@ func TestSettingsSaveTrustedOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "hooks.example.com\nadmin.example.com\n192.168.1.10:8443"
+	want := "hooks.example.com\nhttps://admin.example.com\n192.168.1.10:8443"
 	if after.TrustedOrigins != want {
 		t.Errorf("信任来源存成了 %q，期望 %q", after.TrustedOrigins, want)
 	}
@@ -1042,6 +1082,34 @@ func TestSettingsSaveTrustedOrigins(t *testing.T) {
 	}
 	if after.TrustedOrigins != "" {
 		t.Errorf("清空之后应当是空的，实际 %q", after.TrustedOrigins)
+	}
+
+	// 开关：模板里复选框后面跟了个同名 hidden，所以「勾了」和「没勾」都要读到明确的值。
+	raw := func(values []string) {
+		form := url.Values{
+			"web_port": {"16000"}, "base_url": {"http://localhost:16000"},
+			"admin_user": {"admin"},
+		}
+		form["origin_check"] = values
+		req := httptest.NewRequest("POST", "/settings", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		s.handleSettingsSave(httptest.NewRecorder(), req)
+	}
+	settings := func() *store.Settings {
+		got, err := st.Settings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	raw([]string{"1", "0"}) // 勾上：复选框在前，hidden 在后
+	if !settings().OriginCheck {
+		t.Error("勾上开关之后应当是开启")
+	}
+	raw([]string{"0"}) // 没勾：只剩 hidden
+	if settings().OriginCheck {
+		t.Error("取消勾选之后应当是关闭")
 	}
 }
 

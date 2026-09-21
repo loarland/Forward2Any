@@ -32,18 +32,27 @@
 </div>
 
 <div class="panel">
-  <h2>访问来源</h2>
+  <h2>跨站请求校验</h2>
+  <div class="checkbox-line">
+    <input type="checkbox" role="switch" id="origin_check" name="origin_check" value="1"
+           {{if .S.OriginCheck}}checked{{end}}>
+    {{/* 复选框后面跟一个同名 hidden：没勾时也能读到明确的 "0"（同名取第一个值） */}}
+    <input type="hidden" name="origin_check" value="0">
+    <label for="origin_check">校验写请求的来源 <span class="hint">开启后只允许同源或下面列表里的地址</span></label>
+  </div>
   <label>
-    <span>信任的 Origin / Referer <span class="hint">每行一个，可以留空</span></span>
-    <textarea name="trusted_origins" rows="3" placeholder="hooks.example.com">{{.S.TrustedOrigins}}</textarea>
+    <span>允许的 Origin / Referer <span class="hint">每行或用逗号分隔，例如 https://example.com</span></span>
+    <textarea name="trusted_origins" rows="3" placeholder="https://hooks.example.com">{{.S.TrustedOrigins}}</textarea>
   </label>
   <div class="note">
-    后台的写操作（登录、保存设置等）会核对请求的来源与本服务看到的地址是否一致，不一致就拒绝，防的是别的站点伪造请求。<br>
-    用 <span class="mono">IP:端口</span> 直接访问时两边天然一致，<strong>不用配任何东西</strong>；<br>
+    后台的写操作（登录、保存设置等）会核对请求的 <span class="mono">Origin</span>（没有就看
+    <span class="mono">Referer</span>），不一致就返回 403，防的是别的站点伪造请求。<br>
+    用 <span class="mono">IP:端口</span> 直接访问时两边天然一致，<strong>不用配任何东西</strong>；
     套了反向代理、而代理改写了 Host（nginx 没写 <span class="mono">proxy_set_header Host</span> 就会）时，
-    把浏览器里访问用的地址填到这里，例如 <span class="mono">hooks.example.com</span> 或
-    <span class="mono">https://hooks.example.com:8443</span>。<br>
-    「回调基址」里的主机名默认就认，不用重复填。
+    把浏览器里访问用的地址填到上面，例如 <span class="mono">https://hooks.example.com</span>。<br>
+    只写主机名（<span class="mono">hooks.example.com</span>）表示协议不限，写全
+    <span class="mono">https://</span> 开头的就只认那个协议；「回调基址」里的主机名默认就认，不用重复填。<br>
+    关掉开关就不校验来源，只剩会话 cookie 的 SameSite 兜着，一般不需要关。
   </div>
 </div>
 

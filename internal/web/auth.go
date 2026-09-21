@@ -136,56 +136,63 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 // guard 挡跨站写请求。SameSite=Lax 是主要防线，这里是双保险。
 // 只作用于后台路由：/hook/ 要接受来自任意站点的服务端请求，不在此列。
+// 设置页的开关关掉之后这里直接放行（只剩 cookie 的 SameSite 兜着）。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.sameOrigin(r) {
+		if s.originAllowed(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		origin := requestOrigin(r)
 		s.log.Warn("拒绝跨站写请求", "路径", r.URL.Path, "来源", origin, "Host", r.Host,
-			"提示", "把访问用的地址加到「设置 → 信任的 Origin / Referer」，或让反向代理转发原始 Host")
+			"提示", "把访问用的地址加到「设置 → 跨站请求校验 → 允许的 Origin / Referer」，或让反向代理转发原始 Host")
 		http.Error(w, fmt.Sprintf(
 			"跨站请求被拒绝：请求来自 %s，本服务看到的地址是 %s。\n"+
-				"用 IP:端口 直接访问后台时两边天然一致，不用配置；\n"+
-				"套了反向代理（代理会改写 Host）就到「设置 → 信任的 Origin / Referer」里加上 %s，"+
-				"或者让代理转发原始 Host（nginx：proxy_set_header Host $http_host;）。",
+				"用 IP:端口 直接访问后台时两边天然一致，不用配置；套了反向代理（代理会改写 Host）就到"+
+				"「设置 → 跨站请求校验」的允许列表里加上 %s，或者让代理转发原始 Host"+
+				"（nginx：proxy_set_header Host $http_host;）。",
 			clipHeader(origin), clipHeader(r.Host), clipHeader(origin)), http.StatusForbidden)
 	})
 }
 
-// sameOrigin 判断写请求的 Origin（没有就看 Referer）是否指向本服务。
-// 两边都没有的（curl、脚本）放行。
-//
-// 认这三种地址：
-//  1. 请求上的 Host —— 直接按 IP:端口 访问后台就落在这里，默认可用；
-//  2. 「回调基址」里的主机名 —— 管理员声明的公开地址，反代转发 Host 时也落在 1；
-//  3. 「信任的 Origin / Referer」里列出的主机名 —— 代理改写 Host 时用它放行。
-func (s *Server) sameOrigin(r *http.Request) bool {
-	return sameOrigin(r, s.trustedHostList()...)
+// originAllowed 判断写请求的 Origin（没有就看 Referer）是否被允许。
+// 开关关掉之后一律放行。
+func (s *Server) originAllowed(r *http.Request) bool {
+	if !s.originCheckOn() {
+		return true
+	}
+	return originMatches(r, s.allowedOriginList())
 }
 
-// sameOrigin 是纯函数版本，方便单测。extra 是除 r.Host 之外额外认可的主机。
-func sameOrigin(r *http.Request, extra ...string) bool {
+// originMatches 是校验的纯函数部分，方便单测。放行这几种：
+//
+//  1. 非写请求、以及两个头都不带的请求（curl、脚本）；
+//  2. 同源 —— 按 IP:端口 直接访问后台就落在这里，默认可用，也是「先能进后台」的保证；
+//  3. 允许列表里的条目 —— 反向代理改写 Host 时靠它放行，其中「回调基址」的主机名
+//     在进缓存时按不限协议处理。
+func originMatches(r *http.Request, allow []allowedOrigin) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
 	raw := requestOrigin(r)
 	if raw == "" {
-		// 非浏览器客户端（curl、脚本）不会带这两个头。
 		return true
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
-	want := normalizeHost(u.Host)
-	if want == "" {
+	host := normalizeHost(u.Host)
+	if host == "" {
 		return false
 	}
-	for _, c := range append([]string{r.Host}, extra...) {
-		if normalizeHost(c) == want {
+	if host == normalizeHost(r.Host) {
+		return true
+	}
+	scheme := strings.ToLower(u.Scheme)
+	for _, a := range allow {
+		if a.matches(scheme, host) {
 			return true
 		}
 	}
@@ -200,41 +207,73 @@ func requestOrigin(r *http.Request) string {
 	return r.Header.Get("Referer")
 }
 
-// parseTrustedOrigins 解析设置里那一栏：每行一个地址，留空行忽略。
-// 行首的 http:// / https:// 和路径都无所谓，只取主机名（带端口就带端口）。
-// 认得的形式：hooks.example.com、hooks.example.com:8443、https://hooks.example.com/x
-// 返回可用的主机名与看不懂的行（后者用于保存时报错）。
-func parseTrustedOrigins(text string) (hosts []string, bad []string) {
+// allowedOrigin 是允许列表里的一条。scheme 为空表示不限协议，只比主机名。
+type allowedOrigin struct {
+	scheme string
+	host   string
+}
+
+// matches 判断请求的 scheme / 主机名是否落在这一条上。
+func (a allowedOrigin) matches(scheme, host string) bool {
+	return a.host == host && (a.scheme == "" || a.scheme == scheme)
+}
+
+// parseAllowedOrigins 解析设置里那一栏：每行或用逗号分隔一条，空项忽略。
+// 认得 https://hooks.example.com、hooks.example.com、hooks.example.com:8443，
+// 带路径和查询串也无所谓，只取 scheme 与主机名。返回看不懂的条目用于保存时报错。
+func parseAllowedOrigins(text string) (list []allowedOrigin, bad []string) {
 	seen := map[string]bool{}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, item := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	}) {
+		item = strings.TrimSpace(item)
+		if item == "" {
 			continue
 		}
-		host := line
-		if strings.Contains(line, "://") {
-			u, err := url.Parse(line)
-			if err != nil || u.Host == "" {
-				bad = append(bad, line)
+		entry := allowedOrigin{}
+		rest := item
+		if i := strings.Index(rest, "://"); i >= 0 {
+			scheme := strings.ToLower(rest[:i])
+			if scheme != "http" && scheme != "https" {
+				bad = append(bad, item)
 				continue
 			}
-			host = u.Host
+			entry.scheme = scheme
+			rest = rest[i+3:]
 		}
-		// 去掉可能写上的路径，并挡掉明显的垃圾（空格、纯路径）。
-		if i := strings.IndexAny(host, "/?#"); i >= 0 {
-			host = host[:i]
+		// 去掉路径 / 查询串 / userinfo。
+		if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+			rest = rest[:i]
 		}
-		h := normalizeHost(host)
-		if h == "" || strings.HasPrefix(h, ":") || !validHostChars(h) {
-			bad = append(bad, line)
+		if i := strings.LastIndex(rest, "@"); i >= 0 {
+			rest = rest[i+1:]
+		}
+		host := normalizeHost(rest)
+		if host == "" || strings.HasPrefix(host, ":") || !validHostChars(host) {
+			bad = append(bad, item)
 			continue
 		}
-		if !seen[h] {
-			seen[h] = true
-			hosts = append(hosts, h)
+		entry.host = host
+		key := entry.scheme + "|" + entry.host
+		if !seen[key] {
+			seen[key] = true
+			list = append(list, entry)
 		}
 	}
-	return hosts, bad
+	return list, bad
+}
+
+// formatAllowedOrigins 把允许列表写回设置页那一栏：一行一条，带协议的原样带上。
+func formatAllowedOrigins(list []allowedOrigin) string {
+	lines := make([]string, 0, len(list))
+	for _, a := range list {
+		if a.scheme == "" {
+			lines = append(lines, a.host)
+			continue
+		}
+		lines = append(lines, a.scheme+"://"+a.host)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // validHostChars 只放行主机名/地址里该出现的字符。
