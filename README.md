@@ -6,6 +6,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![Image](https://img.shields.io/badge/%E9%95%9C%E5%83%8F-%E7%BA%A6%2018MB-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
+[![Docker image](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml/badge.svg)](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml)
 [![License](https://img.shields.io/badge/License-GPL--3.0-16a34a?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/forks)
@@ -88,7 +89,35 @@ flowchart LR
 
 ## 快速开始
 
-### Docker Compose（推荐）
+### 方式一：拉现成镜像（推荐）
+
+镜像由 GitHub Actions 自动构建并推到 GHCR，`linux/amd64` 和 `linux/arm64` 都有，
+服务器上不用 clone 代码、也不用装 Go：
+
+```bash
+docker run -d --name forward2any --restart unless-stopped \
+  -p 16000:16000 \
+  -v f2a-data:/data \
+  -e F2A_BASE_URL="https://hooks.example.com" \
+  -e F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
+  ghcr.io/loarland/forward2any:latest
+```
+
+打开 `http://<服务器地址>:16000`，用 `admin` 和你设置的密码登录。数据都在 `f2a-data` 这个卷里，
+容器删了重建也不丢。
+
+| 镜像标签 | 什么时候更新 |
+| --- | --- |
+| `latest` / `main` | 每次推送到 main |
+| `sha-99ec020` | 对应某一次提交，想固定版本就用它 |
+| `1.2.3` / `1.2` | 仓库打了 `v1.2.3` 这样的标签时 |
+
+> **包还是私有的时候要先登录**：`docker login ghcr.io -u <用户名> -p <有 read:packages 权限的 token>`。
+> 仓库改成公开之后，**还要单独把这个包也改成公开** —— 容器包不会跟着仓库自动变公开，
+> 从私有仓库发出来的包一直是私有的。改的地方：GitHub → 头像 → Your packages → `forward2any`
+> → Package settings → Change visibility。
+
+### 方式二：Docker Compose（从源码构建）
 
 ```bash
 git clone https://github.com/loarland/Forward2Any.git
@@ -101,9 +130,11 @@ export F2A_BASE_URL="https://hooks.example.com"
 docker compose up -d
 ```
 
-打开 `http://<服务器地址>:16000`，用 `admin` 和你设置的密码登录。
+想改成用现成镜像的话，把 `docker-compose.yml` 里的 `build: .` 换成
+`image: ghcr.io/loarland/forward2any:latest` 就行，其余不用动（这样 `docker compose pull`
+也能用了）。
 
-宿主端口被占用时换一个就行，容器内监听的端口不用动：
+宿主端口被占用时换一个，容器内监听的端口不用动：
 
 ```bash
 export F2A_HOST_PORT=9000
@@ -114,7 +145,7 @@ docker compose up -d
 > `F2A_BASE_URL` 很重要：后台显示的回调地址和 curl 示例都按它生成。服务在反向代理后面时，
 > 这里要填外部真正的访问地址，而不是 `localhost`。
 
-### 源码运行
+### 方式三：源码运行
 
 需要 Go 1.27 或更高版本：
 
@@ -509,7 +540,20 @@ server {
 
 ## 升级
 
-**Docker**：拉取新代码后重新构建，数据在卷里，不会丢：
+**用现成镜像**：拉新的 `latest` 再重建容器，数据都在命名卷里，重建不会丢：
+
+```bash
+docker rm -f forward2any
+docker run -d --name forward2any --restart unless-stopped \
+  -p 16000:16000 -v f2a-data:/data \
+  -e F2A_BASE_URL="https://hooks.example.com" \
+  ghcr.io/loarland/forward2any:latest
+```
+
+用 compose 的话一条命令就够：`docker compose pull && docker compose up -d`。
+想固定版本就把 `latest` 换成 `sha-99ec020` 或 `v1.2.3` 这样的标签，要升级时再手动改。
+
+**从源码构建**：拉取新代码后重新构建：
 
 ```bash
 git pull
@@ -638,6 +682,11 @@ bash scripts/e2e-docker.sh
 依赖只有 5 个，都是必需的：纯 Go 的 SQLite 驱动、bcrypt、SMTP 客户端、IMAP 客户端、MIME 解析。
 HTTP 路由用标准库 `net/http` 的方法 + 通配符模式，消息体模板用标准库 `text/template`
 （沙箱内无 IO 能力，用户填模板是安全的），前端不引框架。
+
+**镜像**：推送到 `main` 会自动构建 `linux/amd64` + `linux/arm64` 两个架构并推到 GHCR
+（见 `.github/workflows/docker.yml`）；打 `v1.2.3` 这样的标签会额外生成版本号标签。
+构建阶段跑在 runner 自己的架构上、按 `GOARCH=$TARGETARCH` 交叉编译，所以不需要 QEMU 去模拟
+整个 Go 工具链。
 
 ## 许可证
 

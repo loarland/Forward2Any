@@ -7,7 +7,9 @@
 #   push 到 main  ->  latest、main、sha-<短 SHA>
 #   打 v1.2.3 标签 ->  1.2.3、1.2（latest 只在默认分支上打）
 #   手动触发（Actions 页面上的 Run workflow）
-name: 构建并推送镜像
+# 名字用 ASCII：它同时是 Actions 页面上的标题和 README 里那个徽章的文案，
+# 徽章是 GitHub 生成的 SVG，字体栈里没有中文字形，写成中文会显示成一排方框。
+name: Docker image
 
 on:
   push:

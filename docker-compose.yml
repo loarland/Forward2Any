@@ -1,5 +1,7 @@
 services:
   forward2any:
+    # 想直接用 GHCR 上的现成镜像、不在本地构建，就把下面这行换成：
+    #   image: ghcr.io/loarland/forward2any:latest（amd64 / arm64 都有）
     build: .
     image: forward2any:latest
     container_name: forward2any
