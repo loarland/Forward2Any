@@ -1,0 +1,75 @@
+# 构建多架构镜像并推到 GHCR（ghcr.io/loarland/forward2any）。
+#
+# 有了它，服务器上部署就不用 clone 代码再本地构建了，docker pull 一下就行：
+#   docker pull ghcr.io/loarland/forward2any:latest
+#
+# 触发方式：
+#   push 到 main  ->  latest、main、sha-<短 SHA>
+#   打 v1.2.3 标签 ->  1.2.3、1.2（latest 只在默认分支上打）
+#   手动触发（Actions 页面上的 Run workflow）
+name: 构建并推送镜像
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 同一分支连着推的时候，把还在跑的旧构建取消掉，省 runner 时间
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout 代码
+      packages: write # 推 GHCR（用内置的 GITHUB_TOKEN，不用另配 secret）
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      # 仓库名是 Forward2Any，但容器镜像名必须全小写，直接拼 ${GITHUB_REPOSITORY} 会被
+      # docker 拒掉（invalid reference format）。包名统一成小写的 forward2any，
+      # 但只要是从这个仓库推的，GitHub 会自动把它挂到这个仓库名下。
+      - name: 算出小写的镜像名
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # 编译那一步在 runner 自己的架构上跑（Dockerfile 里用 GOARCH=$TARGETARCH 交叉编译），
+      # 运行层没有 RUN，所以其实用不到模拟；登记 binfmt 是为了以后往运行层加命令时不会突然挂掉。
+      - name: 准备 QEMU 与 Buildx
+        uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成标签
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # gha 缓存：第二次构建开始，go mod download 和依赖层都能命中
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,5 +1,11 @@
 # ---- 构建 ----
-FROM golang:1.27-alpine AS build
+# --platform=$BUILDPLATFORM：构建阶段跑在**构建机自己的架构**上，用 GOARCH=$TARGETARCH 交叉编译。
+# 多架构（amd64/arm64）时不用 QEMU 去模拟整个 Go 工具链，快得多；
+# 纯 Go 的 SQLite 驱动 + CGO_ENABLED=0，交叉编译没有 cgo 那些坑。
+# 普通 docker build 时 TARGETOS/TARGETARCH 就是本机架构，行为跟以前一样。
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 
 # 先只拷依赖描述文件，这一层能吃到缓存
@@ -8,7 +14,7 @@ RUN go mod download
 
 COPY . .
 # CGO_ENABLED=0：SQLite 用的是纯 Go 实现，所以能静态编译进 distroless
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/f2a ./cmd/f2a \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/f2a ./cmd/f2a \
     && mkdir -p /out/data
 
 # ---- 运行 ----
