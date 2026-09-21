@@ -150,7 +150,6 @@ docker compose up -d
 docker run -d --name forward2any --restart unless-stopped \
   -p 16000:16000 \
   -v f2a-data:/data \
-  --user 0 \
   -e F2A_BASE_URL="https://hooks.example.com" \
   -e F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
   ghcr.io/loarland/forward2any:latest
@@ -637,6 +636,9 @@ printf 'F2A_UID=%s\nF2A_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 docker compose up -d
 ```
 
+> 用命名卷跑非 root 的话要先把卷交给它：
+> `docker run --rm -v forward2any_f2a-data:/data alpine chown -R <uid>:<gid> /data`。
+
 **直接备份数据库**：
 
 ```bash
@@ -652,8 +654,8 @@ docker run --rm -v forward2any_f2a-data:/data -v "$PWD:/backup" alpine \
 sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
 ```
 
-> `docker run` 不读 compose 里的配置：镜像默认以 nonroot（65532）运行，挂宿主机目录时要么加
-> `--user 0`，要么 `sudo chown -R 65532:65532 ./data`。
+> 想以非 root 跑：compose 用 `.env` 里的 `F2A_UID` / `F2A_GID`，`docker run` 用
+> `--user "$(id -u):$(id -g)"`。两种方式都要求数据目录属主跟它一致。
 
 ## 安全说明
 
@@ -672,9 +674,8 @@ sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
 
 需要自己注意的：
 
-- **Docker Compose 里容器默认以 root 运行**（镜像本身是 nonroot，compose 用 `user: 0` 覆盖），
-  为的是宿主机目录不用先 chown。要在意这点就在 `.env` 里把 `F2A_UID` / `F2A_GID` 设成非 0，
-  并保证数据目录属主与它一致。
+- **Docker 镜像默认以 root 运行**，数据文件也归 root。不想这样的话把 compose 的 `.env` 里
+  `F2A_UID` / `F2A_GID` 设成非 0（`docker run` 用 `--user`），并保证数据目录属主与它一致。
 - **程序只提供明文 HTTP**，暴露到公网请务必套反向代理上 TLS。
 - **IP 白名单校验的是直连对端地址**，不是可以伪造的 `X-Forwarded-For`。放在反向代理后面时，
   白名单要填代理的地址；要按真实客户端 IP 限制，请在代理层做。

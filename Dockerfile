@@ -22,14 +22,16 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     && mkdir -p /out/data
 
 # ---- 运行 ----
-# distroless static 自带 CA 证书（出站 HTTPS 要用），且没有 shell —— 攻击面小
-FROM gcr.io/distroless/static-debian12:nonroot
+# distroless static 自带 CA 证书（出站 HTTPS 要用），且没有 shell —— 攻击面小。
+# 用不带 :nonroot 的 tag：镜像默认以 root 运行，数据目录挂命名卷还是宿主机目录都写得进去。
+# 想以非 root 跑就 docker run --user / compose 里设 F2A_UID、F2A_GID，那时数据目录属主要与之一致。
+FROM gcr.io/distroless/static-debian12
 
 COPY --from=build /out/f2a /f2a
 # 分发的镜像里带上许可证原文（Apache-2.0 第 4 条要求随分发附带）
 COPY --from=build /src/LICENSE /LICENSE
-# 提前把 /data 建出来并交给 nonroot，这样命名卷会继承属主、非 root 也能写
-COPY --from=build --chown=nonroot:nonroot /out/data /data
+# 提前把 /data 建出来，命名卷会继承它的属主
+COPY --from=build /out/data /data
 
 VOLUME /data
 EXPOSE 16000
@@ -41,5 +43,5 @@ ENV F2A_DATA_DIR=/data \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD ["/f2a", "healthcheck"]
 
-USER nonroot
+USER 0:0
 ENTRYPOINT ["/f2a"]

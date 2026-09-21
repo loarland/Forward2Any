@@ -3,7 +3,7 @@
 # Forward2Any 的 Docker 端到端验证。
 #
 # 和 scripts/e2e.sh 的区别：这里所有东西都真跑在容器里 ——
-# 镜像构建、distroless 非 root 运行、容器健康检查、容器间网络、
+# 镜像构建、distroless root 运行、容器健康检查、容器间网络、
 # 命名卷持久化。mock 接收器也放进容器，用容器名互访，
 # 不依赖 host.docker.internal 这类宿主机特例。
 #
@@ -121,8 +121,8 @@ pass "服务已就绪（宿主 $BASE → 容器 :16000）"
 
 # distroless 里没有 shell，所以只能用镜像元数据确认运行身份
 RUNUSER=$(docker inspect "$APP" --format '{{.Config.User}}')
-[ "$RUNUSER" = "nonroot" ] || fail "容器应当以 nonroot 运行，实际是 '$RUNUSER'"
-pass "容器以非 root（nonroot）身份运行"
+[ "$RUNUSER" = "0:0" ] || fail "镜像应当默认以 root（0:0）运行，实际是 '$RUNUSER'"
+pass "镜像默认以 root（0:0）运行"
 
 echo
 echo "== 登录 =="
@@ -213,17 +213,23 @@ code=$(curl -s -o "$WORK/hook.out" -w '%{http_code}' -X POST \
 grep -q "accepted 1" "$WORK/hook.out" || fail "应当入队 1 条，实际：$(cat "$WORK/hook.out")"
 pass "接收端点返回 202 并入队 1 条"
 
+# 注意：不要写 `docker logs ... | grep -q ...`。脚本开了 pipefail，grep -q 命中第一行就退出，
+# 还在写日志的 docker logs 会吃到 SIGPIPE、整条管道返回 141 —— 明明命中也会判成失败。
+# 先把日志收进变量，再对变量做匹配。
 ok=0
 i=0
+mocklog=""
 while [ "$i" -lt 50 ]; do
-  if docker logs "$MOCK" 2>&1 | grep -q 'BODY {"action":"push"'; then ok=1; break; fi
+  mocklog="$(docker logs "$MOCK" 2>&1 || true)"
+  case "$mocklog" in *'BODY {"action":"push"'*) ok=1; break ;; esac
   sleep 0.2
   i=$((i + 1))
 done
-[ "$ok" = "1" ] || fail "mock 容器没有收到转发：$(docker logs "$MOCK" 2>&1 | tail -10)"
-docker logs "$MOCK" 2>&1 | grep -q 'PATH /sink' || fail "转发路径不对"
-docker logs "$MOCK" 2>&1 | grep -q 'X-F2A-Hops: gh-docker' || fail "转发缺少跳链头"
-docker logs "$MOCK" 2>&1 | grep -q 'X-Target: mock' || fail "源上配置的固定请求头没带上"
+[ "$ok" = "1" ] || fail "mock 容器没有收到转发：$(tail -10 <<<"$mocklog")"
+mocklog="$(docker logs "$MOCK" 2>&1 || true)"
+grep -q 'PATH /sink' <<<"$mocklog" || fail "转发路径不对，mock 日志：$(tail -8 <<<"$mocklog")"
+grep -q 'X-F2A-Hops: gh-docker' <<<"$mocklog" || fail "转发缺少跳链头"
+grep -q 'X-Target: mock' <<<"$mocklog" || fail "源上配置的固定请求头没带上"
 pass "容器间转发成功：报文原样透传，跳链与自定义请求头都在"
 
 echo
@@ -259,7 +265,7 @@ curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources" > "$WORK/sources2.html"
 grep -q "gh-docker" "$WORK/sources2.html" || fail "重启后源丢失，命名卷没生效"
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries?status=success" > "$WORK/deliv2.html"
 grep -q "转发到 mock" "$WORK/deliv2.html" || fail "重启后投递日志丢失"
-pass "重启容器后源与投递日志都还在（命名卷 + 非 root 写入均正常）"
+pass "重启容器后源与投递日志都还在（命名卷持久化正常）"
 
 echo
 echo "== 端口热切换在容器里的表现 =="
