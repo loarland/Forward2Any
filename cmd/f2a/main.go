@@ -1,6 +1,7 @@
 // 命令 f2a：Forward2Any 服务端。
 //
 //	go run ./cmd/f2a              # 启动服务
+//	./f2a version                 # 打印版本（发布包和 install.sh 靠它对账）
 //	./f2a healthcheck --url ...   # 容器健康检查（distroless 里没有 curl）
 package main
 
@@ -27,9 +28,22 @@ import (
 	"github.com/loarland/Forward2Any/internal/web"
 )
 
+// version 由发布流程在编译时注入：
+//
+//	go build -ldflags "-X main.version=1.0.0" ./cmd/f2a
+//
+// 直接 go build / go run 时就显示 dev。
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck(os.Args[2:]))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "healthcheck":
+			os.Exit(healthcheck(os.Args[2:]))
+		case "version", "-version", "--version":
+			fmt.Println(version)
+			return
+		}
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "启动失败:", err)
@@ -106,7 +120,8 @@ func run() error {
 	}
 
 	log.Info("Forward2Any 已启动",
-		"db", st.Path, "端口", settings.WebPort, "管理员", settings.AdminUser, "回调基址", settings.BaseURL)
+		"版本", version, "db", st.Path, "端口", settings.WebPort,
+		"管理员", settings.AdminUser, "回调基址", settings.BaseURL)
 	if usingDefaultPassword {
 		// 只在使用默认密码时出现。改掉之后后台才会全部解锁。
 		log.Warn("当前使用默认管理员密码，登录后会强制要求修改；改掉之前后台只开放设置页",

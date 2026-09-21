@@ -7,6 +7,7 @@
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![Image](https://img.shields.io/badge/%E9%95%9C%E5%83%8F-%E7%BA%A6%2018MB-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
 [![Docker image](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml/badge.svg)](https://github.com/loarland/Forward2Any/actions/workflows/docker.yml)
+[![Release](https://img.shields.io/github/v/release/loarland/Forward2Any?style=flat-square)](https://github.com/loarland/Forward2Any/releases)
 [![License](https://img.shields.io/badge/License-GPL--3.0-16a34a?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/loarland/Forward2Any?style=flat-square&logo=github)](https://github.com/loarland/Forward2Any/forks)
@@ -35,6 +36,7 @@ Webhook、邮箱或 Telegram。
 - [特性](#特性)
 - [系统架构](#系统架构)
 - [快速开始](#快速开始)
+- [二进制部署与 systemd 服务](#二进制部署与-systemd-服务)
 - [首次使用](#首次使用)
 - [核心概念](#核心概念)
 - [源](#源)
@@ -89,35 +91,46 @@ flowchart LR
 
 ## 快速开始
 
-### 方式一：拉现成镜像（推荐）
+### 方式一：一键脚本（推荐，Linux + systemd）
+
+一台干净的 Linux 服务器上，一条命令搞定：下载发布包、校验 sha256、装二进制、建系统用户和
+数据目录、写 systemd 单元、启动并等它通过健康检查。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loarland/Forward2Any/main/scripts/install.sh | sudo bash
+```
+
+跑完会把后台地址、管理员账号和随机生成的密码打印出来。想先看看脚本干了什么再跑：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/loarland/Forward2Any/main/scripts/install.sh
+sudo bash install.sh
+```
+
+首次安装可以按自己的情况覆盖这些（都会写进 `/etc/forward2any.env`）：
+
+```bash
+sudo F2A_PORT=9000 \
+     F2A_BASE_URL="https://hooks.example.com" \
+     F2A_ADMIN_PASSWORD="换成一个强密码" \
+     bash install.sh
+```
+
+之后升级、看状态、卸载：
+
+```bash
+sudo bash install.sh upgrade              # 只换二进制和单元文件，数据和配置不动
+sudo bash install.sh status               # 版本 + systemd 状态 + 健康检查
+sudo bash install.sh uninstall            # 停服务、删单元和二进制，保留数据
+sudo bash install.sh uninstall --purge    # 连数据一起删
+```
+
+细节（装了哪些文件、怎么改端口、怎么备份）见[二进制部署与 systemd 服务](#二进制部署与-systemd-服务)。
+
+### 方式二：Docker Compose（拉现成镜像）
 
 镜像由 GitHub Actions 自动构建并推到 GHCR，`linux/amd64` 和 `linux/arm64` 都有，
 服务器上不用 clone 代码、也不用装 Go：
-
-```bash
-docker run -d --name forward2any --restart unless-stopped \
-  -p 16000:16000 \
-  -v f2a-data:/data \
-  -e F2A_BASE_URL="https://hooks.example.com" \
-  -e F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
-  ghcr.io/loarland/forward2any:latest
-```
-
-打开 `http://<服务器地址>:16000`，用 `admin` 和你设置的密码登录。数据都在 `f2a-data` 这个卷里，
-容器删了重建也不丢。
-
-| 镜像标签 | 什么时候更新 |
-| --- | --- |
-| `latest` / `main` | 每次推送到 main |
-| `sha-99ec020` | 对应某一次提交，想固定版本就用它 |
-| `1.2.3` / `1.2` | 仓库打了 `v1.2.3` 这样的标签时 |
-
-> **包还是私有的时候要先登录**：`docker login ghcr.io -u <用户名> -p <有 read:packages 权限的 token>`。
-> 仓库改成公开之后，**还要单独把这个包也改成公开** —— 容器包不会跟着仓库自动变公开，
-> 从私有仓库发出来的包一直是私有的。改的地方：GitHub → 头像 → Your packages → `forward2any`
-> → Package settings → Change visibility。
-
-### 方式二：Docker Compose（从源码构建）
 
 ```bash
 git clone https://github.com/loarland/Forward2Any.git
@@ -130,9 +143,27 @@ export F2A_BASE_URL="https://hooks.example.com"
 docker compose up -d
 ```
 
-想改成用现成镜像的话，把 `docker-compose.yml` 里的 `build: .` 换成
-`image: ghcr.io/loarland/forward2any:latest` 就行，其余不用动（这样 `docker compose pull`
-也能用了）。
+`docker-compose.yml` 里默认就是 `image: ghcr.io/loarland/forward2any:latest`，所以这一条命令
+等于「拉最新镜像 + 起容器」。不想 clone 仓库的话直接 `docker run` 也一样：
+
+```bash
+docker run -d --name forward2any --restart unless-stopped \
+  -p 16000:16000 \
+  -v f2a-data:/data \
+  -e F2A_BASE_URL="https://hooks.example.com" \
+  -e F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
+  ghcr.io/loarland/forward2any:latest
+```
+
+数据都在 `f2a-data` 这个卷里，容器删了重建也不丢。
+
+| 镜像标签 | 什么时候更新 |
+| --- | --- |
+| `latest` / `main` | 每次推送到 main |
+| `sha-99ec020` | 对应某一次提交，想固定版本就用它 |
+| `1.2.3` / `1.2` | 仓库打了 `v1.2.3` 这样的标签时 |
+
+想自己在本地从源码构建（改了代码要验证），把 compose 里的 `image:` 那行换成 `build: .` 即可。
 
 宿主端口被占用时换一个，容器内监听的端口不用动：
 
@@ -141,6 +172,11 @@ export F2A_HOST_PORT=9000
 export F2A_BASE_URL="http://<服务器地址>:9000"
 docker compose up -d
 ```
+
+> **包还是私有的时候要先登录**：`docker login ghcr.io -u <用户名> -p <有 read:packages 权限的 token>`。
+> 仓库改成公开之后，**还要单独把这个包也改成公开** —— 容器包不会跟着仓库自动变公开，
+> 从私有仓库发出来的包一直是私有的。改的地方：GitHub → 头像 → Your packages → `forward2any`
+> → Package settings → Change visibility。
 
 > `F2A_BASE_URL` 很重要：后台显示的回调地址和 curl 示例都按它生成。服务在反向代理后面时，
 > 这里要填外部真正的访问地址，而不是 `localhost`。
@@ -161,6 +197,103 @@ F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" ./f2a
 不提供 `F2A_ADMIN_PASSWORD` 时用的是默认密码 `f2a`，**但它是一次性的**：用它登录后，
 后台除「设置」页外的所有页面都会被挡回去，必须先改成新密码才能继续用。
 想跳过这一步，启动前用 `F2A_ADMIN_PASSWORD` 指定自己的密码。
+
+## 二进制部署与 systemd 服务
+
+不想用 Docker 就直接跑二进制。发布包是静态编译的（`CGO_ENABLED=0`），
+除了 Linux 内核什么都不依赖 —— 没有 glibc 版本问题，Alpine 也能跑。
+
+一键脚本落地的东西都在这几个路径上，手动装也按同一套约定来：
+
+| 东西 | 路径 |
+| --- | --- |
+| 二进制 | `/usr/local/bin/f2a` |
+| 数据目录 | `/var/lib/forward2any`（SQLite 库在里面，权限 0700、属主 `f2a`） |
+| 环境变量 | `/etc/forward2any.env`（0600，只在首次启动时作为引导值） |
+| systemd 单元 | `/etc/systemd/system/forward2any.service` |
+| 运行用户 | `f2a`（系统用户，没有登录 shell） |
+
+### 手动安装
+
+每个发布包（`forward2any_<版本>_linux_<架构>.tar.gz`）里就是二进制、systemd 单元和 LICENSE：
+
+```bash
+ver=1.0.0        # 换成你要的版本；amd64 / arm64 按机器选
+base="https://github.com/loarland/Forward2Any/releases/download/v${ver}"
+curl -fsSLO "${base}/forward2any_${ver}_linux_amd64.tar.gz"
+curl -fsSLO "${base}/checksums.txt"
+sha256sum -c --ignore-missing checksums.txt      # 建议校验一下
+tar -xzf "forward2any_${ver}_linux_amd64.tar.gz"
+cd "forward2any_${ver}_linux_amd64"
+
+sudo install -m 0755 f2a /usr/local/bin/f2a
+nologin=$(command -v nologin || echo /bin/false)
+sudo useradd --system --no-create-home --home-dir /var/lib/forward2any --shell "$nologin" f2a
+sudo install -d -m 0700 -o f2a -g f2a /var/lib/forward2any
+sudo install -m 0644 forward2any.service /etc/systemd/system/forward2any.service
+
+# 首次启动的引导值都放这里（0600，里面有密码）
+sudo install -m 0600 -o root -g root /dev/stdin /etc/forward2any.env <<'EOF'
+F2A_DATA_DIR=/var/lib/forward2any
+F2A_PORT=16000
+F2A_ADMIN_USER=admin
+F2A_BASE_URL=https://hooks.example.com
+F2A_LOG_LEVEL=info
+F2A_ADMIN_PASSWORD=换成你自己的强密码
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now forward2any
+f2a version                                      # 确认装上的是哪个版本
+f2a healthcheck                                  # 健康检查（按数据库里的实际端口探）
+```
+
+> `F2A_BASE_URL` 一定要填外部真正能访问到的地址（域名或公网 IP）—— 回调 URL 和 curl 示例
+> 都按它生成。填成默认的 `localhost` 的话，回调地址拿去给 GitHub / Stripe 是用不了的。
+
+### 平时怎么管
+
+```bash
+systemctl status forward2any            # 状态
+journalctl -u forward2any -f            # 跟日志（启动失败也看这里）
+sudo systemctl restart forward2any      # 重启
+sudo systemctl stop forward2any         # 停
+sudo bash install.sh upgrade            # 升级（= 重跑一键脚本，数据和配置不动）
+```
+
+### 单元文件里做了什么
+
+单元文件就在仓库里：`deploy/forward2any.service`。几条值得知道的：
+
+- `Restart=always`，`KillSignal=SIGTERM`：二进制收到 SIGTERM 会优雅关闭，**没投完的记录留在库里**，
+  下次启动接着投 —— 所以别用 `kill -9`。
+- 加固：`NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome`、`PrivateTmp`、`PrivateDevices`、
+  空 `CapabilityBoundingSet`、`RestrictAddressFamilies`、`SystemCallFilter=@system-service`、
+  `MemoryDenyWriteExecute`。它能写的地方只有自己的数据目录。
+- `ReadWritePaths=/var/lib/forward2any`：数据目录换到别处时这一行要跟着改（一键脚本会自动改）。
+- 端口小于 1024 需要 `AmbientCapabilities=CAP_NET_BIND_SERVICE`（一键脚本会自动加上；
+  默认的 16000 不需要）。
+- `UMask=0077`：库文件是 0600 —— 里面存着 webhook 密钥、邮箱密码和 Telegram Bot Token。
+
+### 改端口 / 改密码
+
+`/etc/forward2any.env` 里那些值**只在首次启动时**写进数据库，之后一律以后台「设置」页为准。
+所以：
+
+- 服务跑起来之后要换端口，请到后台「设置」页改（改完立即重新绑定，不用重启服务），
+  同时别忘了防火墙 / 反向代理 / `F2A_BASE_URL` 也要跟着改。
+- 想改管理员密码，用后台「设置 → 管理员账号」，不是改环境变量文件。
+  忘了密码见[常见问题](#忘记后台密码)。
+
+### 卸载
+
+```bash
+sudo bash install.sh uninstall            # 停服务、删单元和二进制，数据保留
+sudo bash install.sh uninstall --purge    # 连数据目录、环境变量文件和系统用户一起删
+```
+
+手动装的就把上面的步骤倒着做一遍：`systemctl disable --now forward2any`、
+删掉单元文件和 `/usr/local/bin/f2a`、`systemctl daemon-reload`。
 
 ## 首次使用
 
@@ -457,6 +590,9 @@ URL 带路径，所以这一个端口就够了。
 下面这些**只在首次启动时**写入数据库作为引导值，之后一律以后台「设置」里的值为准
 （改了环境变量重启也不会覆盖你在界面上改过的值）。
 
+怎么给：Docker 用 `docker-compose.yml` 或 `docker run -e`；一键脚本装的写在
+`/etc/forward2any.env`（systemd 通过 `EnvironmentFile` 读它），改完 `systemctl restart forward2any`。
+
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `F2A_DATA_DIR` | `./data` | 数据目录，容器里是 `/data` |
@@ -468,7 +604,13 @@ URL 带路径，所以这一个端口就够了。
 
 ## 数据与备份
 
-所有数据都在一个 SQLite 文件里：`<数据目录>/f2a.db`（容器内是 `/data/f2a.db`）。
+所有数据都在一个 SQLite 文件里：`<数据目录>/f2a.db`。
+
+| 装法 | 数据文件 |
+| --- | --- |
+| 一键脚本 / 手动装二进制 | `/var/lib/forward2any/f2a.db` |
+| Docker（命名卷 `f2a-data`） | 容器内 `/data/f2a.db` |
+| 源码直接跑 | `./data/f2a.db`（可用 `F2A_DATA_DIR` 改） |
 
 **导出 / 导入**：后台「设置」页可以把所有源与规则导出成 JSON，也可以导入。导入是**整体替换**，
 不做合并，所以换机器、改坏了回滚都很方便。导出文件里不含管理员账号、密码哈希和监听端口，
@@ -539,6 +681,16 @@ server {
 程序会读 `X-Forwarded-Proto`，所以在 HTTPS 后面会把会话 cookie 标成 `Secure`。
 
 ## 升级
+
+**脚本装的（二进制 + systemd）**：重跑一遍一键脚本就是升级 —— 它会下载新版本、校验、
+换掉二进制和单元文件、重启并等健康检查通过，环境变量文件和数据一概不动：
+
+```bash
+sudo bash install.sh upgrade
+# 或者指定版本：sudo F2A_VERSION=1.2.3 bash install.sh upgrade
+```
+
+回滚就是 `sudo F2A_VERSION=<上一个版本> bash install.sh upgrade`。
 
 **用现成镜像**：拉新的 `latest` 再重建容器，数据都在命名卷里，重建不会丢：
 
@@ -613,17 +765,48 @@ Telegram 单条消息的上限是 4096 个字符，超了直接判失败、不�
 
 ### 忘记后台密码
 
-进容器改数据库即可（容器里没有 shell，用一次性容器带上同一个卷）：
+管理员密码是 bcrypt 哈希存在数据库里的，**改环境变量不会覆盖已有的值**。
+重置的办法是删掉那一行，让它在下次启动时按 `F2A_ADMIN_PASSWORD` 重新种一个
+（这是「引导值」唯一一次例外）。
+
+一键脚本 / 手动装二进制的：
+
+```bash
+sudo systemctl stop forward2any
+sudo sqlite3 /var/lib/forward2any/f2a.db "delete from settings where key='admin_pass_hash';"
+# 确认 /etc/forward2any.env 里的 F2A_ADMIN_PASSWORD 是你要的密码（没有就加一行）
+sudo systemctl start forward2any
+```
+
+Docker 装的（容器里没有 shell，用一次性容器带上同一个卷）：
 
 ```bash
 docker compose down
-docker run --rm -it -v forward2any_f2a-data:/data alpine sh
-# 容器内：apk add sqlite && sqlite3 /data/f2a.db
-#   update settings set value='' where key='admin_pass_hash';  -- 置空哈希
+docker run --rm -v forward2any_f2a-data:/data alpine sh -s <<'EOF'
+apk add -q sqlite
+sqlite3 /data/f2a.db "delete from settings where key='admin_pass_hash';"
+EOF
+F2A_ADMIN_PASSWORD='新密码' docker compose up -d
 ```
 
-> 更省事的办法：先备份 `f2a.db`，再用 `internal/store` 里的密码哈希逻辑生成一个新哈希写回去。
-> 如果只是忘了密码且不想折腾，导出配置 → 删掉数据卷重来 → 导入配置，源和规则都在导出文件里。
+> 实测过：删掉之后新密码能登进去、旧密码登不进。`sqlite3` 没装就 `apt install sqlite3` /
+> `apk add sqlite`。库里还有源、规则和投递日志，**别为了重置密码把数据删了**。
+
+### 服务起不来 / 一直重启
+
+先看日志，原因基本都在里面：
+
+```bash
+journalctl -u forward2any -n 50 --no-pager
+```
+
+常见的几种：
+
+- `address already in use`：端口被占了，换 `F2A_PORT`（`ss -ltnp | grep 16000` 看是谁占的）。
+- `permission denied` 打不开数据库：数据目录属主不对，应该是 `f2a:f2a` 且 0700
+  （`chown -R f2a:f2a /var/lib/forward2any`）。
+- **改了端口却访问不到**：`/etc/forward2any.env` 只是引导值。之前在后台「设置」页改过端口的话，
+  以设置页为准 —— 要么去后台改回来，要么直接用数据库里那个端口访问。
 
 ### 想同时收和发一个 Webhook
 
@@ -687,6 +870,20 @@ HTTP 路由用标准库 `net/http` 的方法 + 通配符模式，消息体模板
 （见 `.github/workflows/docker.yml`）；打 `v1.2.3` 这样的标签会额外生成版本号标签。
 构建阶段跑在 runner 自己的架构上、按 `GOARCH=$TARGETARCH` 交叉编译，所以不需要 QEMU 去模拟
 整个 Go 工具链。
+
+**发布**：打 `v1.2.3` 这样的标签会触发 `.github/workflows/release.yml`，编译
+linux/darwin × amd64/arm64 的静态二进制、生成 `checksums.txt`，一起发到
+[Releases](https://github.com/loarland/Forward2Any/releases)。
+`scripts/install.sh` 就是拿这些资源装的，所以脚本和发布包是配套的：改了
+`deploy/forward2any.service` 要发新版本才会进到别人的机器上。
+
+装出来的版本号靠编译时注入，本地也能验：
+
+```bash
+go build -ldflags "-X main.version=1.2.3" -o f2a ./cmd/f2a && ./f2a version
+bash -n scripts/install.sh
+docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck:stable -S warning /mnt/scripts/install.sh
+```
 
 ## 许可证
 

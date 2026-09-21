@@ -1,0 +1,67 @@
+# Forward2Any 的 systemd 服务单元。
+#
+# 正常情况下由 scripts/install.sh 装好（从发布包里取出这个文件放到
+# /etc/systemd/system/forward2any.service，再 daemon-reload）。手动装也行，
+# 但下面这几个路径是约定死的，install.sh 和文档都按它来：
+#
+#   二进制    /usr/local/bin/f2a
+#   数据目录  /var/lib/forward2any   （F2A_DATA_DIR；库里存着各种密钥，权限 0700 归 f2a）
+#   环境变量  /etc/forward2any.env    （0600；首次启动的引导值都在这里）
+#   运行用户  f2a（系统用户，无登录 shell）
+#
+# 手动安装：
+#   install -m 0755 f2a /usr/local/bin/f2a
+#   install -m 0644 forward2any.service /etc/systemd/system/forward2any.service
+#   install -m 0600 -o root -g root /dev/stdin /etc/forward2any.env <<'EOF'
+#   F2A_DATA_DIR=/var/lib/forward2any
+#   F2A_PORT=16000
+#   F2A_BASE_URL=https://hooks.example.com
+#   F2A_ADMIN_PASSWORD=换成你自己的强密码
+#   EOF
+#   systemctl daemon-reload && systemctl enable --now forward2any
+#
+# 改端口：改 /etc/forward2any.env 里的 F2A_PORT 后 systemctl restart forward2any。
+# 注意那只是「引导值」，之后一律以后台「设置」页里的值为准；两边不一致时以设置页为准。
+[Unit]
+Description=Forward2Any - webhook / 邮件转发中继
+Documentation=https://github.com/loarland/Forward2Any
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=f2a
+Group=f2a
+EnvironmentFile=/etc/forward2any.env
+ExecStart=/usr/local/bin/f2a
+
+# 二进制收到 SIGTERM 会优雅关闭：没投完的记录留在库里，下次启动接着投（别用 SIGKILL）
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=3
+
+# 加固。它是个收外部请求的服务，跑在专用非 root 用户下，除了自己的数据目录不需要写任何地方。
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/forward2any
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,96 @@
+# 打 v* 标签时编译各平台的二进制，发到 GitHub Releases。
+#
+# 产物（release 资源）：
+#   forward2any_1.0.0_linux_amd64.tar.gz    内含 f2a / forward2any.service / LICENSE
+#   forward2any_1.0.0_linux_arm64.tar.gz
+#   forward2any_1.0.0_darwin_amd64.tar.gz   （macOS 只能手动跑，没有系统服务）
+#   forward2any_1.0.0_darwin_arm64.tar.gz
+#   checksums.txt                           sha256，scripts/install.sh 会验它
+#
+# 服务器上一键安装就是靠这些资源：bash scripts/install.sh（或 curl | bash）。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# 建 release 和上传资源都要写权限
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 编译并打包
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # SQLite 是纯 Go 实现，关掉 cgo 才能编出静态二进制（用户机器上不需要任何依赖）
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          pkg="forward2any_${ver}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "dist/$pkg"
+          go build -trimpath -ldflags="-s -w -X main.version=${ver}" -o "dist/$pkg/f2a" ./cmd/f2a
+          cp LICENSE deploy/forward2any.service "dist/$pkg/"
+
+          # 只有一个平台能在 runner 上直接跑，就拿它验版本号有没有注进去
+          if [ "${{ matrix.goos }}/${{ matrix.goarch }}" = "linux/amd64" ]; then
+            got="$("./dist/$pkg/f2a" version)"
+            [ "$got" = "$ver" ] || { echo "版本号注入失败：期望 $ver，实际 $got" >&2; exit 1; }
+          fi
+          file "dist/$pkg/f2a"
+
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+          ls -lh dist
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: forward2any-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: 收集所有产物
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成校验和
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: 发布 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" ./dist/*.tar.gz ./dist/checksums.txt \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
