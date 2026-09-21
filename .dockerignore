@@ -18,6 +18,10 @@ scripts/
 deploy/
 .github/
 
+# 本地部署配置（可能有密码，不该进构建上下文）
+.env
+.env.example
+
 # 编辑器 / 系统
 .DS_Store
 .idea/

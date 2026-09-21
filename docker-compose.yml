@@ -1,38 +1,51 @@
 services:
   forward2any:
-    # 默认拉 GHCR 上的现成镜像（amd64 / arm64 都有），服务器上不用装 Go、也不用构建。
-    # 想从源码构建（改了代码要本地验证）就把这行换成：
-    #   build: .
+    # 现成镜像，amd64 / arm64 都有。改了代码要本地验证就把这行换成：build: .
     image: ghcr.io/loarland/forward2any:latest
     container_name: forward2any
     restart: unless-stopped
 
+    # 后台界面和 webhook 接收端点共用这一个端口，靠路径区分：
+    #   管理后台      http://<host>:<宿主端口>/
+    #   webhook 接收  http://<host>:<宿主端口>/hook/<路径标识>
+    # 这样新增接收源不用改端口，也就不用动 docker 配置。
+    # 宿主端口在 .env 里改（F2A_HOST_PORT），容器内固定 16000；
+    # F2A_BASE_URL 没显式设过的话会跟着宿主端口走。
     ports:
-      # 后台界面和所有 webhook 接收端点共用这一个端口，靠路径区分：
-      #   管理后台      http://<host>:<宿主端口>/
-      #   webhook 接收  http://<host>:<宿主端口>/hook/<路径标识>
-      # 这样新增接收源不需要改端口，也就不需要动 docker 配置。
-      #
-      # 宿主端口可换（16000 常被别的服务占用）：F2A_HOST_PORT=9000 docker compose up -d
-      # 换的时候记得把 F2A_BASE_URL 一起改，否则生成的回调地址是错的。
       - "${F2A_HOST_PORT:-16000}:16000"
 
+    # 数据目录。默认命名卷；.env 里设 F2A_DATA_DIR=./data 就换成宿主机目录。
     volumes:
-      # 命名卷会继承镜像里 /data 的属主，非 root 用户开箱即可写。
-      # 想改成宿主机目录（方便直接 backup）的话，见 README「数据与备份」。
-      - f2a-data:/data
+      - "${F2A_DATA_DIR:-f2a-data}:/data"
+
+    # 容器内进程的身份，默认 65532（镜像里的 nonroot）。数据目录属主由 init-data 对齐，
+    # 所以命名卷和宿主机目录都不需要先 chown。改这里的话 init-data 会跟着改。
+    user: "${F2A_UID:-65532}:${F2A_GID:-65532}"
+
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
 
     environment:
-      # 下面这些只在「首次启动」时写入数据库，之后一律以后台「设置」里的值为准。
-      # 容器内监听端口固定 16000，要换的是外面的 F2A_HOST_PORT。
+      # 下面这些只在首次启动时写进数据库，之后一律以后台「设置」页的值为准。
       F2A_PORT: "16000"
-      F2A_ADMIN_USER: "admin"
-      # 不设就用默认密码 f2a —— 登录后后台只开放设置页，必须先改密。
-      # 想省掉这一步就自己指定一个：
-      #   F2A_ADMIN_PASSWORD=$(openssl rand -base64 18) docker compose up -d
+      F2A_ADMIN_USER: "${F2A_ADMIN_USER:-admin}"
+      # 留空则用默认密码 f2a，登录后强制要求修改
       F2A_ADMIN_PASSWORD: "${F2A_ADMIN_PASSWORD:-}"
-      # 必须是外部真正能访问到的地址，回调 URL 和 curl 示例都按它生成
-      F2A_BASE_URL: "${F2A_BASE_URL:-http://localhost:16000}"
+      # 回调 URL 和 curl 示例的基址，必须是外部真正能访问到的地址
+      F2A_BASE_URL: "${F2A_BASE_URL:-http://localhost:${F2A_HOST_PORT:-16000}}"
+      F2A_LOG_LEVEL: "${F2A_LOG_LEVEL:-info}"
+
+  # 把数据目录的属主改成上面那个 uid。非 root 进程没有 chown 权限，
+  # 而宿主机目录在 Linux 上常常是 root 属主（比如由 Docker 自动创建），
+  # 不改就写不进去。命名卷本身就是 65532 属主，这一步等于空跑。
+  init-data:
+    image: busybox:1.37
+    user: "0:0"
+    command: ["sh", "-c", "chown -R ${F2A_UID:-65532}:${F2A_GID:-65532} /data"]
+    volumes:
+      - "${F2A_DATA_DIR:-f2a-data}:/data"
+    restart: "no"
 
 volumes:
   f2a-data:

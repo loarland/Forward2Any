@@ -9,6 +9,9 @@
 /f2a
 /dist/
 
+# 本地部署配置（.env.example 是模板，进仓库；.env 里会有密码）
+/.env
+
 # 编辑器 / 系统
 .DS_Store
 .idea/
