@@ -1449,6 +1449,7 @@ func TestFlashRendersAsNonBlockingToast(t *testing.T) {
 	css := string(app)
 	for _, want := range []struct{ what, re string }{
 		{"浮层要固定定位（占位就会顶动页面）", `(?s)\.toast\s*\{[^}]*position:\s*fixed`},
+		{"浮层要在视口正中（横竖都居中，两个方向都得靠 transform 找回来）", `(?s)\.toast\s*\{[^}]*top:\s*50%[^}]*left:\s*50%[^}]*transform:\s*translate\(-50%,\s*-50%\)`},
 		{"浮层不能吃点击（它可能正盖着页面头的按钮）", `(?s)\.toast\s*\{[^}]*pointer-events:\s*none`},
 		{"关闭按钮要单独把点击收回来", `(?s)\.toast-close\s*\{[^}]*pointer-events:\s*auto`},
 		{"浮层要自己淡出（没有 JS 时也得消失，不能一直糊在页面上）", `(?s)@keyframes toast-life.*?visibility:\s*hidden`},

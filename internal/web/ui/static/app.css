@@ -408,31 +408,34 @@ button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-colo
 .alert.err { background: var(--err-bg); border: 1px solid var(--err-line); color: var(--err-text); }
 .alert.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-text); }
 
-/* 一次性反馈（已保存 / 已删除 / 测试已发送）走浮层。
-   刻意 position: fixed —— 它要是占在页面流里，出现的那一刻整页高度会变，
-   跨过「要不要纵向滚动条」那条线时经典滚动条会占走 15px，居中的内容整体横移
-   （真机实测：main 平移 7.5px，列表页上就是搜索框和按钮「抖一下」）。
-   自动淡出交给 CSS 动画：没有 JS 时也会消失，不会一直糊在页面上。
-   整块 pointer-events:none，只有 × 例外 —— 万一它正盖着页面头的按钮，也点得到。 */
+/* 一次性反馈（已保存 / 已删除 / 测试已发送）走浮层：在视口正中浮一下，几秒后自己淡出。
+   几件事都是刻意的：
+   - position: fixed —— 它要是占在页面流里，出现的那一刻整页高度会变，跨过
+     「要不要纵向滚动条」那条线时经典滚动条会占走 15px，居中的内容整体横移
+     （真机实测：main 平移 7.5px，列表页上就是搜索框和按钮「抖一下」）。
+   - 只用淡入淡出，不做位移缩放：正中的东西再滑一下反而晃眼，也没有动静效果要照顾。
+   - 整块 pointer-events:none，只有 × 例外 —— 它浮在内容上面，不能把点击挡住。
+   - 淡出是纯 CSS 动画：没有 JS 时也会消失，不会一直糊在页面上。 */
 .toast {
   position: fixed;
-  top: 64px;              /* 顶栏 52px + 一点缝 */
+  top: 50%;
   left: 50%;
   z-index: 30;
   display: flex;
   align-items: center;
   gap: 8px;
   max-width: min(560px, calc(100vw - 32px));
-  padding: 9px 11px 9px 14px;
+  padding: 11px 13px 11px 16px;
   background: var(--ok-bg);
   border: 1px solid var(--ok-line);
-  border-radius: 6px;
+  border-radius: 8px;
   box-shadow: var(--shadow-pop);
   color: var(--ok-text);
   font-size: 13.5px;
   pointer-events: none;
-  /* 每帧都得写 translateX(-50%)：只写 left:50% 的话动画期间会丢掉居中 */
-  transform: translateX(-50%);
+  /* 两个方向的居中都得在 transform 里：只写 left/top:50% 的话元素会偏出右下半个身位，
+     动画每帧也要写全，不然中途会丢掉居中。 */
+  transform: translate(-50%, -50%);
   animation: toast-life 4.2s ease forwards;
 }
 .toast-close {
@@ -456,22 +459,13 @@ button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-colo
 .toast-close:hover { opacity: 1; background: var(--ok-line); }
 html:not(.js) .toast-close { display: none; }
 
+/* 纯淡入淡出：最后一帧的 visibility: hidden 才是「真的消失」（只把 opacity 归零的话
+   元素还在，会继续吃掉指针事件）；forwards 让这一帧停住。 */
 @keyframes toast-life {
-  0%   { opacity: 0; transform: translate(-50%, -6px); }
-  7%   { opacity: 1; transform: translate(-50%, 0); }
-  88%  { opacity: 1; transform: translate(-50%, 0); }
-  100% { opacity: 0; transform: translate(-50%, -6px); visibility: hidden; }
-}
-
-/* 减少动态效果时只留淡入淡出，不做位移 */
-@keyframes toast-fade {
-  0%   { opacity: 0; transform: translateX(-50%); }
-  7%   { opacity: 1; transform: translateX(-50%); }
-  88%  { opacity: 1; transform: translateX(-50%); }
-  100% { opacity: 0; transform: translateX(-50%); visibility: hidden; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .toast { animation-name: toast-fade; }
+  0%   { opacity: 0; }
+  7%   { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
 }
 
 .note {
