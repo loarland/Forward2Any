@@ -40,6 +40,9 @@ const (
 	KeyTrustedOrigins      = "trusted_origins"
 	KeyOriginCheck         = "origin_check"
 	KeyTimezone            = "timezone"
+	KeyTurnstileEnabled    = "turnstile_enabled"
+	KeyTurnstileSiteKey    = "turnstile_site_key"
+	KeyTurnstileSecret     = "turnstile_secret"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -60,6 +63,11 @@ type Settings struct {
 	TrustedOrigins      string // 允许列表，逗号或换行分隔
 	OriginCheck         bool   // 是否校验写请求的 Origin/Referer
 	Timezone            string // IANA 时区名，如 Asia/Shanghai；留空表示跟随系统
+
+	// Cloudflare Turnstile（登录人机校验）。默认关闭：没配密钥时整页不加载任何外部脚本。
+	TurnstileEnabled bool
+	TurnstileSiteKey string // 站点密钥，会写进登录页，公开的
+	TurnstileSecret  string // 密钥，只留在服务端
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -123,6 +131,9 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyTrustedOrigins, exist.TrustedOrigins)
 	setIfMissing(KeyOriginCheck, boolStr(exist.OriginCheck))
 	setIfMissing(KeyTimezone, exist.Timezone)
+	setIfMissing(KeyTurnstileEnabled, boolStr(exist.TurnstileEnabled))
+	setIfMissing(KeyTurnstileSiteKey, exist.TurnstileSiteKey)
+	setIfMissing(KeyTurnstileSecret, exist.TurnstileSecret)
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -178,6 +189,10 @@ func (s *Store) Settings() (*Settings, error) {
 	d.OriginCheck = get(KeyOriginCheck, "1") == "1"
 	// 时区没有「默认值」可言：留空就是跟随系统，所以不能用 get 的兜底语义。
 	d.Timezone = strings.TrimSpace(raw[KeyTimezone])
+	// Turnstile 默认关闭（raw 里没有这个键就是关），密钥按原样存，不做 trim 之外的加工。
+	d.TurnstileEnabled = raw[KeyTurnstileEnabled] == "1"
+	d.TurnstileSiteKey = strings.TrimSpace(raw[KeyTurnstileSiteKey])
+	d.TurnstileSecret = strings.TrimSpace(raw[KeyTurnstileSecret])
 	d.raw = raw
 	return d, nil
 }
@@ -260,6 +275,9 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyTrustedOrigins:      v.TrustedOrigins,
 		KeyOriginCheck:         boolStr(v.OriginCheck),
 		KeyTimezone:            v.Timezone,
+		KeyTurnstileEnabled:    boolStr(v.TurnstileEnabled),
+		KeyTurnstileSiteKey:    v.TurnstileSiteKey,
+		KeyTurnstileSecret:     v.TurnstileSecret,
 	})
 }
 

@@ -87,6 +87,12 @@ class H(http.server.BaseHTTPRequestHandler):
             resp, ctype = b'{"errcode":0,"errmsg":"ok"}', 'application/json'
         elif p.startswith('/onebot'):
             resp, ctype = b'{"status":"ok","retcode":0,"data":{"message_id":1}}', 'application/json'
+        elif p.startswith('/turnstile'):
+            # 假的 siteverify：token 是 good-token 就通过，别的都失败
+            if b'response=good-token' in body:
+                resp, ctype = b'{"success":true,"hostname":"example.com"}', 'application/json'
+            else:
+                resp, ctype = b'{"success":false,"error-codes":["invalid-input-response"]}', 'application/json'
         else:
             resp, ctype = b'ok', 'text/plain'
         self.send_response(200)
@@ -112,6 +118,7 @@ F2A_PORT="$APP_PORT" \
 F2A_ADMIN_USER="$ADMIN_USER" \
 F2A_ADMIN_PASSWORD="$ADMIN_PASS" \
 F2A_BASE_URL="$BASE" \
+F2A_TURNSTILE_ENDPOINT="http://127.0.0.1:$MOCK_PORT/turnstile" \
   "$WORK/f2a" > "$WORK/app.log" 2>&1 &
 PIDS+=("$!")
 
@@ -1342,6 +1349,103 @@ post_form \
   --data-urlencode "timezone=" \
   "$BASE/settings"
 pass "时区可以改回「跟随系统」"
+echo
+echo "== Cloudflare Turnstile 人机校验 =="
+
+# 校验端点指向 mock（见上面启动命令里的 F2A_TURNSTILE_ENDPOINT）
+TS_JAR="$WORK/turnstile-jar.txt"
+
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings" > "$WORK/ts-off.html"
+grep -q "安全设置" "$WORK/ts-off.html" || fail "设置页没有「安全设置」面板"
+grep -q 'name="turnstile_enabled"' "$WORK/ts-off.html" || fail "设置页没有 Turnstile 开关"
+grep -q 'name="turnstile_site_key"' "$WORK/ts-off.html" || fail "设置页没有站点密钥输入框"
+grep -q 'name="turnstile_secret"' "$WORK/ts-off.html" || fail "设置页没有密钥输入框"
+if grep -q 'id="turnstile_enabled"[^>]*checked' "$WORK/ts-off.html"; then
+  fail "Turnstile 默认应当是关闭的"
+fi
+grep -q 'class="cf-turnstile"' <(curl -fsS "$BASE/login") && fail "默认关闭时登录页不该加载人机校验"
+pass "安全设置面板就位，Turnstile 默认关闭、登录页不加载任何外部脚本"
+
+# 只勾开关不填密钥：保存要被拒（否则会把登录挡死）
+code=$(curl -s -o "$WORK/ts-nokey.html" -w '%{http_code}' -b "$JAR" -c "$JAR" -X POST \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "turnstile_enabled=1" \
+  --data-urlencode "turnstile_site_key=" \
+  --data-urlencode "turnstile_secret=" \
+  "$BASE/settings")
+grep -q "站点密钥" "$WORK/ts-nokey.html" || fail "只勾开关不填密钥应当被拦下"
+pass "只开开关不填密钥会被拒绝"
+
+# 正常开启
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "turnstile_enabled=1" \
+  --data-urlencode "turnstile_site_key=0xE2E-SITE-KEY" \
+  --data-urlencode "turnstile_secret=e2e-secret" \
+  "$BASE/settings"
+
+curl -fsS "$BASE/login" > "$WORK/ts-login.html"
+grep -q 'class="cf-turnstile"' "$WORK/ts-login.html" || fail "开启后登录页没有渲染控件"
+grep -q 'data-sitekey="0xE2E-SITE-KEY"' "$WORK/ts-login.html" || fail "登录页没有带上站点密钥"
+grep -q 'challenges.cloudflare.com/turnstile/v0/api.js' "$WORK/ts-login.html" || fail "登录页没有加载控件脚本"
+pass "开启后登录页加载控件并带上站点密钥"
+
+# 不带 token：拒
+code=$(curl -s -o "$WORK/ts-notoken.html" -w '%{http_code}' -c "$TS_JAR" -b "$TS_JAR" \
+  --data-urlencode "username=$ADMIN_USER" --data-urlencode "password=$ADMIN_PASS" "$BASE/login")
+grep -q "人机校验没通过" "$WORK/ts-notoken.html" || fail "缺 token 时应当报人机校验失败"
+grep -q f2a_session "$TS_JAR" && fail "缺 token 时不该建会话"
+pass "不带 token 的登录被拒绝，且没有建会话"
+
+# token 无效：拒
+code=$(curl -s -o "$WORK/ts-bad.html" -w '%{http_code}' -c "$TS_JAR" -b "$TS_JAR" \
+  --data-urlencode "username=$ADMIN_USER" --data-urlencode "password=$ADMIN_PASS" \
+  --data-urlencode "cf-turnstile-response=bad-token" "$BASE/login")
+grep -q "人机校验没通过" "$WORK/ts-bad.html" || fail "token 无效时应当报人机校验失败"
+grep -q f2a_session "$TS_JAR" && fail "token 无效时不该建会话"
+pass "token 无效的登录被拒绝"
+
+# token 有效 + 密码正确：放行
+code=$(curl -s -o /dev/null -w '%{http_code}' -c "$TS_JAR" -b "$TS_JAR" \
+  --data-urlencode "username=$ADMIN_USER" --data-urlencode "password=$ADMIN_PASS" \
+  --data-urlencode "cf-turnstile-response=good-token" "$BASE/login")
+[ "$code" = "303" ] || fail "校验通过后应当 303 跳转，实际 $code"
+grep -q f2a_session "$TS_JAR" || fail "校验通过后应当拿到会话 cookie"
+pass "校验通过 + 密码正确时正常登录"
+
+# 关掉之后恢复原样：登录页不再加载控件，且不带 token 也能登录
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "retry_max=5" \
+  --data-urlencode "retry_backoff_seconds=10" \
+  --data-urlencode "payload_max_bytes=65536" \
+  --data-urlencode "log_retention_days=30" \
+  --data-urlencode "turnstile_enabled=0" \
+  --data-urlencode "turnstile_site_key=0xE2E-SITE-KEY" \
+  --data-urlencode "turnstile_secret=e2e-secret" \
+  "$BASE/settings"
+
+curl -fsS "$BASE/login" > "$WORK/ts-after.html"
+grep -q 'class="cf-turnstile"' "$WORK/ts-after.html" && fail "关掉之后登录页还在加载控件"
+rm -f "$TS_JAR"
+code=$(curl -s -o /dev/null -w '%{http_code}' -c "$TS_JAR" -b "$TS_JAR" \
+  --data-urlencode "username=$ADMIN_USER" --data-urlencode "password=$ADMIN_PASS" "$BASE/login")
+[ "$code" = "303" ] || fail "关掉之后不带 token 应当能登录，实际 $code"
+pass "关掉后恢复原样（页面干净、登录不再要求校验）"
 echo
 echo "== 端口热切换 =="
 NEW_PORT=$((APP_PORT + 1))

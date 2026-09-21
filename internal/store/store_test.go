@@ -947,3 +947,50 @@ func TestSaveTimezoneSetting(t *testing.T) {
 		t.Errorf("读回来的时区解析不对：%v", again.Location())
 	}
 }
+
+// Turnstile 三个设置项：默认关闭、能存能读、关掉时不要求密钥。
+func TestTurnstileSettings(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.TurnstileEnabled || s.TurnstileSiteKey != "" || s.TurnstileSecret != "" {
+		t.Fatalf("新库应当是关闭且没有密钥，实际 %+v", s)
+	}
+
+	s.TurnstileEnabled = true
+	s.TurnstileSiteKey = "0xSITE"
+	s.TurnstileSecret = "SEC"
+	if err := st.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.TurnstileEnabled || again.TurnstileSiteKey != "0xSITE" || again.TurnstileSecret != "SEC" {
+		t.Errorf("Turnstile 设置没存下来：%+v", again)
+	}
+
+	// 关掉开关，密钥要留着（下次再开不用重填）
+	again.TurnstileEnabled = false
+	if err := st.SaveSettings(again); err != nil {
+		t.Fatal(err)
+	}
+	off, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.TurnstileEnabled {
+		t.Error("关掉之后又变成开着了")
+	}
+	if off.TurnstileSiteKey != "0xSITE" || off.TurnstileSecret != "SEC" {
+		t.Errorf("关掉开关不该把密钥清掉：%+v", off)
+	}
+}

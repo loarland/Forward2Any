@@ -356,16 +356,27 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "login", map[string]any{"Title": "登录"})
+	s.renderLogin(w, r, "")
+}
+
+// renderLogin 渲染登录页；盾开着的时候把控件也带上。
+func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, errMsg string) {
+	data := map[string]any{"Title": "登录", "LoginError": errMsg}
+	settings, err := s.store.Settings()
+	if err != nil {
+		s.log.Error("读取设置失败，登录页按未开启人机校验渲染", "err", err)
+	} else if s.turnstileActive(settings) {
+		data["Turnstile"] = true
+		data["TurnstileSiteKey"] = settings.TurnstileSiteKey
+		data["TurnstileScript"] = turnstileScriptURL
+	}
+	s.render(w, r, "login", data)
 }
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.limiter.blocked(ip) {
-		s.render(w, r, "login", map[string]any{
-			"Title":      "登录",
-			"LoginError": "失败次数过多，请 5 分钟后再试",
-		})
+		s.renderLogin(w, r, "失败次数过多，请 5 分钟后再试")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -379,12 +390,28 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 人机校验排在验密码之前：这一步过不去就没必要去碰 bcrypt。
+	// 校验失败不计入登录失败次数 —— 控件加载不出来（网络问题）时不该顺带把 IP 锁了。
+	if s.turnstileActive(settings) {
+		token := r.PostFormValue("cf-turnstile-response")
+		if token == "" {
+			s.log.Warn("登录缺少人机校验 token", "ip", ip)
+			s.renderLogin(w, r, "人机校验没通过，请刷新页面重试")
+			return
+		}
+		if err := s.verifyTurnstile(r.Context(), settings.TurnstileSecret, token, ip); err != nil {
+			s.log.Warn("人机校验失败", "ip", ip, "err", err)
+			s.renderLogin(w, r, "人机校验没通过，请刷新页面重试")
+			return
+		}
+	}
+
 	user := r.PostFormValue("username")
 	pass := r.PostFormValue("password")
 	if user != settings.AdminUser || !store.CheckPassword(settings.AdminPassHash, pass) {
 		s.limiter.fail(ip)
 		s.log.Warn("登录失败", "user", user, "ip", ip)
-		s.render(w, r, "login", map[string]any{"Title": "登录", "LoginError": "用户名或密码错误"})
+		s.renderLogin(w, r, "用户名或密码错误")
 		return
 	}
 

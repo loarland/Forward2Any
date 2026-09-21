@@ -2234,3 +2234,162 @@ func TestSettingsTimezone(t *testing.T) {
 		t.Errorf("留空（跟随系统）应当允许，实际 %v", err)
 	}
 }
+
+// Turnstile：开关默认关；开了之后登录必须先过盾，且服务端真的去校验（前端控件可以被绕过）。
+func TestTurnstileLoginFlow(t *testing.T) {
+	// 假的 siteverify：按路径决定成不成
+	var gotSecret, gotToken, gotIP string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotSecret, gotToken, gotIP = r.PostFormValue("secret"), r.PostFormValue("response"), r.PostFormValue("remoteip")
+		w.Header().Set("Content-Type", "application/json")
+		if gotToken == "good-token" {
+			w.Write([]byte(`{"success":true,"hostname":"example.com"}`))
+			return
+		}
+		w.Write([]byte(`{"success":false,"error-codes":["invalid-input-response"]}`))
+	}))
+	defer srv.Close()
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hash, err := store.HashPassword("pass-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AdminUser = "admin"
+	settings.AdminPassHash = hash
+	if err := st.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	s.sessions = newSessionStore()
+	s.turnstileURL = srv.URL
+
+	// 默认关闭：登录页里不该出现任何 Turnstile 的东西
+	rec := httptest.NewRecorder()
+	s.handleLoginForm(rec, httptest.NewRequest("GET", "/login", nil))
+	if strings.Contains(rec.Body.String(), "cf-turnstile") {
+		t.Fatal("默认关闭时登录页不该加载人机校验")
+	}
+
+	// 开启后：页面有控件、站点密钥和脚本
+	settings.TurnstileEnabled = true
+	settings.TurnstileSiteKey = "0xSITEKEY"
+	settings.TurnstileSecret = "SECRET"
+	if err := st.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	s.handleLoginForm(rec, httptest.NewRequest("GET", "/login", nil))
+	page := rec.Body.String()
+	for _, want := range []string{`class="cf-turnstile"`, `data-sitekey="0xSITEKEY"`, "challenges.cloudflare.com/turnstile"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("开了校验的登录页里缺少 %s", want)
+		}
+	}
+
+	// 不带 token 提交：拒掉，而且不建会话
+	req := httptest.NewRequest("POST", "/login", strings.NewReader("username=admin&password=pass-12345678"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	s.handleLoginPost(rec, req)
+	if !strings.Contains(rec.Body.String(), "人机校验没通过") {
+		t.Error("缺 token 时应当报人机校验失败")
+	}
+	assertNoSession(t, rec)
+
+	// 服务端说 token 无效：同样拒掉
+	req = httptest.NewRequest("POST", "/login", strings.NewReader("username=admin&password=pass-12345678&cf-turnstile-response=bad-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	s.handleLoginPost(rec, req)
+	if !strings.Contains(rec.Body.String(), "人机校验没通过") {
+		t.Error("token 无效时应当报人机校验失败")
+	}
+	assertNoSession(t, rec)
+
+	// token 有效 + 密码正确：放行
+	req = httptest.NewRequest("POST", "/login", strings.NewReader("username=admin&password=pass-12345678&cf-turnstile-response=good-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "203.0.113.9:1234"
+	rec = httptest.NewRecorder()
+	s.handleLoginPost(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("校验通过后应当跳转，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	if !hasSessionCookie(t, rec) {
+		t.Error("校验通过后应当建会话")
+	}
+	// 密钥、token、客户端 IP 都要真的发给 Cloudflare
+	if gotSecret != "SECRET" || gotToken != "good-token" || gotIP != "203.0.113.9" {
+		t.Errorf("校验请求内容不对：secret=%q token=%q ip=%q", gotSecret, gotToken, gotIP)
+	}
+
+	// F2A_TURNSTILE=off 的救命开关：登录不再要求校验，页面也不加载控件
+	s.turnstileOff = true
+	rec = httptest.NewRecorder()
+	s.handleLoginForm(rec, httptest.NewRequest("GET", "/login", nil))
+	if strings.Contains(rec.Body.String(), "cf-turnstile") {
+		t.Error("强制关闭后登录页不该再加载控件")
+	}
+	req = httptest.NewRequest("POST", "/login", strings.NewReader("username=admin&password=pass-12345678"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	s.handleLoginPost(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("强制关闭后不带 token 也应当能登录，实际 %d", rec.Code)
+	}
+}
+
+func assertNoSession(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if hasSessionCookie(t, rec) {
+		t.Fatal("不该建会话")
+	}
+}
+
+func hasSessionCookie(t *testing.T, rec *httptest.ResponseRecorder) bool {
+	t.Helper()
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// 只勾开关不填密钥：保存时就拦住 —— 那种状态会把登录挡死。
+func TestValidateSettingsTurnstile(t *testing.T) {
+	base := *store.DefaultSettings()
+	base.AdminUser = "admin"
+	base.BaseURL = "http://127.0.0.1:16000"
+
+	on := base
+	on.TurnstileEnabled = true
+	if err := validateSettings(&on); err == nil || !strings.Contains(err.Error(), "站点密钥") {
+		t.Fatalf("缺站点密钥时应当报错，实际 %v", err)
+	}
+	on.TurnstileSiteKey = "0xSITE"
+	if err := validateSettings(&on); err == nil || !strings.Contains(err.Error(), "密钥（Secret Key）") {
+		t.Fatalf("缺密钥时应当报错，实际 %v", err)
+	}
+	on.TurnstileSecret = "SEC"
+	if err := validateSettings(&on); err != nil {
+		t.Fatalf("两个密钥都填了不该报错，实际 %v", err)
+	}
+	// 关着的时候填不填都行
+	off := base
+	if err := validateSettings(&off); err != nil {
+		t.Fatalf("关闭时不该报错，实际 %v", err)
+	}
+}

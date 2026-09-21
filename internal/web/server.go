@@ -42,6 +42,12 @@ type Server struct {
 	originCheckOff atomic.Bool
 	allowedOrigins atomic.Value
 
+	// Turnstile：turnstileOff 是 F2A_TURNSTILE=off 的救命开关，
+	// turnstileURL 是服务端校验地址（默认官方，可用环境变量指到自建中转）。
+	// 这两个在 New 里读一次，改环境变量要重启才生效。
+	turnstileOff bool
+	turnstileURL string
+
 	mu   sync.Mutex
 	srv  *http.Server
 	ln   net.Listener
@@ -56,6 +62,12 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 		mailin:   poller,
 		sessions: newSessionStore(),
 		limiter:  newLoginLimiter(),
+		// 这两个只在启动时读一次：改环境变量要重启进程才生效。
+		turnstileOff: turnstileForcedOff(),
+		turnstileURL: turnstileEndpoint(),
+	}
+	if s.turnstileOff {
+		log.Warn("Turnstile 人机校验已被 F2A_TURNSTILE=off 强制关闭（登录不再要求校验）")
 	}
 	s.refreshPassFlag()
 	s.refreshTheme()

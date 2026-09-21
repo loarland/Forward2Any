@@ -89,6 +89,13 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if _, ok := r.PostForm["origin_check"]; ok {
 		next.OriginCheck = r.PostFormValue("origin_check") == "1"
 	}
+	// Turnstile 这一组跟代理一样，只在表单确实提交了开关时才动，
+	// 免得别的部分提交把它关掉。
+	if _, ok := r.PostForm["turnstile_enabled"]; ok {
+		next.TurnstileEnabled = r.PostFormValue("turnstile_enabled") == "1"
+		next.TurnstileSiteKey = strings.TrimSpace(formValue(r, "turnstile_site_key"))
+		next.TurnstileSecret = strings.TrimSpace(formValue(r, "turnstile_secret"))
+	}
 	// 时区和信任来源一样，只在表单确实提交了它时才动：
 	// 别的只提交部分字段的请求不该把它清成「跟随系统」。
 	if _, ok := r.PostForm["timezone"]; ok {
@@ -215,6 +222,15 @@ func validateSettings(v *store.Settings) error {
 	if v.Timezone != "" {
 		if _, err := time.LoadLocation(v.Timezone); err != nil {
 			return fmt.Errorf("时区 %q 不认识。要填 IANA 名称，例如 Asia/Shanghai、Asia/Tokyo、Europe/London", v.Timezone)
+		}
+	}
+	// 开了人机校验就必须有密钥：只勾开关不填密钥会把登录挡死（前端控件渲染不出来）。
+	if v.TurnstileEnabled {
+		if v.TurnstileSiteKey == "" {
+			return errors.New("开启 Turnstile 后必须填站点密钥（Site Key）")
+		}
+		if v.TurnstileSecret == "" {
+			return errors.New("开启 Turnstile 后必须填密钥（Secret Key）")
 		}
 	}
 	return validateProxy(v.ProxyType, v.ProxyAddr)

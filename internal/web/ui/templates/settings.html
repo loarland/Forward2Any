@@ -96,6 +96,35 @@
 </div>
 
 <div class="panel">
+  <h2>安全设置</h2>
+  <div class="checkbox-line">
+    <input type="checkbox" role="switch" id="turnstile_enabled" name="turnstile_enabled" value="1"
+      {{if .S.TurnstileEnabled}}checked{{end}}>
+    <input type="hidden" name="turnstile_enabled" value="0">
+    <label for="turnstile_enabled">启用 Cloudflare Turnstile 人机校验（登录时）</label>
+  </div>
+  <div class="grid2">
+    <label>
+      <span>站点密钥（Site Key） <span class="hint">公开的，会写进登录页</span></span>
+      <input type="text" name="turnstile_site_key" value="{{.S.TurnstileSiteKey}}" placeholder="0x4AAAAAAA…">
+    </label>
+    <label>
+      <span>密钥（Secret Key） <span class="hint">只留在服务端</span></span>
+      <input type="password" name="turnstile_secret" value="{{.S.TurnstileSecret}}" autocomplete="new-password">
+    </label>
+  </div>
+  <div class="note">
+    <strong>默认关闭</strong>：关着的时候登录页不加载任何外部脚本。开启后，登录必须先通过
+    Cloudflare Turnstile 的人机校验，服务端拿到 token 会再去 Cloudflare 校验一次（只靠前端控件可以被绕过）。<br>
+    密钥在 Cloudflare 控制台 → Turnstile → 添加站点里拿；域名填你访问后台用的那个。<br>
+    <strong>被盾挡在门外怎么办</strong>：用 <span class="mono">F2A_TURNSTILE=off</span> 重启进程
+    （或先删掉数据库里 <span class="mono">turnstile_enabled</span> 这个键），登录就不再要求校验。<br>
+    校验请求由服务器发往 <span class="mono">challenges.cloudflare.com</span>；要经由自己的中转，
+    用 <span class="mono">F2A_TURNSTILE_ENDPOINT</span> 指定地址。
+  </div>
+</div>
+
+<div class="panel">
   <h2>投递与日志</h2>
   <div class="grid3">
     <label><span>最大重试次数</span><input type="number" name="retry_max" value="{{.S.RetryMax}}" min="1" max="100"></label>
