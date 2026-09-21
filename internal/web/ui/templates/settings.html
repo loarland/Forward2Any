@@ -6,7 +6,9 @@
   </div>
 </div>
 
-{{if .Notice}}<div class="alert ok">{{.Notice}}</div>{{end}}
+{{/* 保存结果走公共的浮层（把它塞进 Flash，布局里统一渲染成 .toast）。
+     以前这里是一条占位的 .alert.ok：它一出现整页往下顶，加上 POST 之后滚动位置归零，
+     看起来就像是刷新了页面再弹个框。 */}}
 
 <form method="post" action="/settings">
 

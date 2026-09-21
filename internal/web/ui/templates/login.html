@@ -2,6 +2,9 @@
 <div class="login-card">
   <h1>Forward2Any</h1>
   <p class="muted">登录管理后台</p>
+  {{/* 登录框这里的报错留在卡片里：它就贴在出错的那个表单上，
+       飘到视口正中反而会盖住用户名和密码。页面级的反馈才走浮层（见 layout.html）。 */}}
+  {{if .LoginError}}<div class="alert err">{{.LoginError}}</div>{{end}}
   <form method="post" action="/login">
     <label><span>用户名</span><input type="text" name="username" autocomplete="username" autofocus required></label>
     <label><span>密码</span><input type="password" name="password" autocomplete="current-password" required></label>

@@ -378,7 +378,8 @@
           : '共 ' + rows.length + ' 条';
       }
       if (reset) {
-        reset.hidden = !filtering;
+        // 用 class 而不是 hidden：这一格的位置要一直占着，不然按钮出现/消失时会把搜索框挤来挤去。
+        reset.classList.toggle('lf-off', !filtering);
       }
       if (empty) {
         empty.hidden = shown > 0;
@@ -509,24 +510,26 @@
     syncCount();
   });
 
-  // 8) 一次性反馈的浮层（已保存 / 已删除 / 测试已发送）。
+  // 8) 一次性反馈的浮层（已保存 / 已删除 / 测试已发送 / 出错）。
   //    自动淡出是 CSS 动画干的（没有 JS 也会消失），这里只补两件事：
   //    点 × 或按 Esc 提前关掉，以及把地址栏里的 ok= 摘掉 —— 不然刷新一下又弹一次。
+  //    错误那版不淡出（CSS 里 animation: none），所以 × 是它唯一的出口。
   (function () {
-    var toast = document.querySelector('.toast');
-    if (!toast) {
+    if (!document.querySelector('.toast')) {
       return;
     }
-    function close() {
-      toast.remove();
+    function closeAll() {
+      document.querySelectorAll('.toast').forEach(function (t) { t.remove(); });
     }
-    var btn = toast.querySelector('[data-toast-close]');
-    if (btn) {
-      btn.addEventListener('click', close);
-    }
+    document.querySelectorAll('.toast').forEach(function (t) {
+      var btn = t.querySelector('[data-toast-close]');
+      if (btn) {
+        btn.addEventListener('click', function () { t.remove(); });
+      }
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
-        close();
+        closeAll();
       }
     });
     if (window.history && history.replaceState) {
@@ -538,6 +541,23 @@
       }
     }
   })();
+
+  // 9) 提交前记住滚动位置。
+  //    表单提交换来的是一份新文档，滚动位置从 0 开始：拉到底点了「保存设置」，
+  //    回来就看见页面弹回顶部再弹提示，跟刷新过一样。
+  //    layout.html 末尾那段内联脚本会在首帧之前把它还原回去（key 只在这里写、只在那里读）。
+  //    用冒泡阶段的 submit：这样跑到这里时前面几个处理器（比如过滤条件没填就拦下提交的）
+  //    已经表态了，被拦下的提交不该记位置 —— 页面根本没走。
+  document.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) {
+      return;
+    }
+    try {
+      sessionStorage.setItem('f2a:scroll', String(window.scrollY || document.documentElement.scrollTop || 0));
+    } catch (err) {
+      /* 无痕模式等写不进去：那就退化成老行为（回到顶部），不影响提交本身 */
+    }
+  });
 
   function fallbackCopy(text, onDone) {
     var ta = document.createElement('textarea');

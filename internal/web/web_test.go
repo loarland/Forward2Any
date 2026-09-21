@@ -595,8 +595,9 @@ func TestThemeTokensCoverAppCSS(t *testing.T) {
 
 // testServer 给那些只需要一个能渲染/能记日志的 Server 的测试用。
 // log 不能留 nil：渲染失败时 render 会去记日志，nil 会把真正的模板错误盖成 panic。
+// limiter 也一样：登录那条路径第一件事就是查它，nil 会空指针。
 func testServer() *Server {
-	return &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), limiter: newLoginLimiter()}
 }
 
 // palettes 那张表是配色名的唯一权威，必须和目录里的文件严格一一对应：
@@ -1456,9 +1457,180 @@ func TestFlashRendersAsNonBlockingToast(t *testing.T) {
 		{"无 JS 时关闭按钮点了没反应，要藏掉", `html:not\(\.js\) \.toast-close\s*\{\s*display:\s*none`},
 		// scrollbar-gutter: stable 对根元素不预留槽位（量过），只能靠 overflow-y: scroll
 		{"滚动条槽位要一直占住，内容宽度才不跟着页面高度变", `(?s)html\s*\{[^}]*overflow-y:\s*scroll`},
+		// 出错那版是同一个浮层，只是不淡出：错误得一直看得见，直到用户看完关掉
+		{"出错浮层不能自动淡出", `(?s)\.toast\.err\s*\{[^}]*animation:\s*none`},
+		{"出错浮层要用错误色，不能跟成功提示一个长相", `(?s)\.toast\.err\s*\{[^}]*background:\s*var\(--err-bg\)`},
+		// 提交回来后先藏住、还原完再显示，否则会先画一帧顶部的画面（看着就是「刷新了一下」）
+		{"还原滚动位置时要先把页面藏起来", `(?s)\.restoring body\s*\{\s*visibility:\s*hidden`},
 	} {
 		if !regexp.MustCompile(want.re).MatchString(css) {
 			t.Errorf("app.css 里缺少这条规则：%s", want.what)
 		}
+	}
+
+	// 「提交前记住位置、回到页面时还原」是两段内联脚本 + 一段 CSS，缺一段都不成立：
+	// 少了 head 那段就没有标记，CSS 不会藏页面；少了 body 末尾那段页面会一直藏着。
+	if n := strings.Count(body, "sessionStorage.getItem('f2a:scroll')"); n != 2 {
+		t.Errorf("布局里读滚动位置的脚本应当有 head / body 末尾两处，实际 %d 处", n)
+	}
+	if !strings.Contains(body, "classList.add('restoring')") {
+		t.Error("没有「带着滚动位置回来」的标记，CSS 就不知道该先藏住页面")
+	}
+	if !strings.Contains(body, "classList.remove('restoring')") {
+		t.Error("还原完没有把标记摘掉，页面会一直藏着")
+	}
+}
+
+// 页面级的反馈只有一种长相：视口正中的浮层（成功版自动淡出，出错版一直挂着）。
+// 以前保存设置的提示是页面顶端一条 .alert.ok，加上提交后滚动位置归零，
+// 看起来就是「刷新了页面再弹个框」。
+func TestPageFeedbackIsAlwaysTheCenteredToast(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+
+	// 1) 设置页：?ok=saved 走公共 flash，换端口那条就地渲染的提示也得是浮层
+	rec := httptest.NewRecorder()
+	s.handleSettings(rec, httptest.NewRequest("GET", "/settings?ok=saved", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="toast"`) || !strings.Contains(body, "已保存") {
+		t.Error("保存设置之后的提示没走浮层")
+	}
+	if strings.Contains(body, `class="alert`) {
+		t.Error("设置页里还有占位的 .alert：它会顶动页面")
+	}
+	rec = httptest.NewRecorder()
+	s.renderSettings(rec, httptest.NewRequest("GET", "/settings", nil), "",
+		"设置已保存。监听端口正在从 1 切换到 2。")
+	body = rec.Body.String()
+	if !strings.Contains(body, `class="toast"`) || !strings.Contains(body, "正在从 1 切换到 2") {
+		t.Error("换端口那条就地渲染的提示没走浮层")
+	}
+
+	// 注意 render 只在调用方没给 Flash 时才去认 ?ok=：
+	// 上面那条分支如果把空字符串也塞进 Flash，保存成功就再也不会有提示了。
+	rec = httptest.NewRecorder()
+	s.handleSettings(rec, httptest.NewRequest("GET", "/settings?ok=imported", nil))
+	if !strings.Contains(rec.Body.String(), "导入完成") {
+		t.Error("设置页的 ?ok= 提示被空 Flash 顶掉了")
+	}
+
+	// 2) 校验失败：整页重渲染，错误同样浮在正中，而且不自动淡出
+	form := url.Values{"name": {"电报"}, "kind": {"telegram"}, "usage": {"in"}, "enabled": {"1"}}
+	req := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	s.handleSourceCreate(rec, req)
+	body = rec.Body.String()
+	if !strings.Contains(body, `class="toast err"`) {
+		t.Error("保存失败的提示没有渲染成浮层（.toast err）")
+	}
+	if !strings.Contains(body, `role="alert"`) {
+		t.Error("出错浮层要用 role=alert：它是打断式的信息，读屏得马上念")
+	}
+	if strings.Contains(body, `class="alert err"`) {
+		t.Error("页面级的错误又变回占位横条了")
+	}
+	if !strings.Contains(body, "只能用作发送源") {
+		t.Error("错误内容没带上")
+	}
+
+	// 3) 登录框那条报错留在卡片里：它贴着出错的表单，
+	//    飘到视口正中反而会盖住用户名和密码。
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/login", strings.NewReader("username=admin&password=wrong"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.handleLoginPost(rec, req)
+	body = rec.Body.String()
+	if !strings.Contains(body, `class="alert err"`) || !strings.Contains(body, "用户名或密码错误") {
+		t.Error("登录失败应当在卡片里就地报错")
+	}
+	if strings.Contains(body, `class="toast`) {
+		t.Error("登录框的报错不该飘到页面正中（那里正盖着用户名和密码）")
+	}
+}
+
+// 列表筛选条那一行的几何必须在首帧就定死。真机上量过（无头 Chrome，1466×905）：
+//   - 计数原本是空的、等 app.js 补字，补上「共 3 条」的那一刻搜索框从 427px 缩到 407px；
+//   - 开始筛选时「清除筛选」长出来，再缩到 349.8px。
+//
+// 于是每次「发送测试」跳回来，用户都看见这一行横着抖一下。现在三件事各占一个固定位置：
+// 计数由服务端渲染、计数盒子留足宽度、按钮用 visibility 藏（位置留着）。
+func TestFilterBarGeometryIsStable(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []int64{}
+	for _, name := range []string{"一号", "二号", "三号"} {
+		src := &store.Source{Name: name, Kind: "webhook", Usage: "out", Enabled: true, Headers: "{}"}
+		if err := st.SaveSource(src); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, src.ID)
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "全部转发", Enabled: true, FromSourceIDs: []int64{ids[0]}, ToSourceIDs: ids[1:],
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	for _, page := range []struct {
+		name, path string
+		handler    func(http.ResponseWriter, *http.Request)
+		want       string
+	}{
+		{"源", "/sources", s.handleSourceList, "共 3 条"},
+		{"规则", "/rules", s.handleRuleList, "共 1 条"},
+	} {
+		rec := httptest.NewRecorder()
+		page.handler(rec, httptest.NewRequest("GET", page.path, nil))
+		body := rec.Body.String()
+		if !strings.Contains(body, `data-lf-count>`+page.want+`<`) {
+			t.Errorf("%s列表的计数没有在服务端渲染出来（页面里得有 %q）：JS 事后再补会把搜索框挤窄",
+				page.name, page.want)
+		}
+		if strings.Contains(body, `data-lf-reset hidden`) {
+			t.Errorf("%s列表的「清除筛选」又用 hidden 藏了：hidden 是 display:none（Pico 还带 !important），"+
+				"它一出现就会挤动搜索框，得用 class 把位置留住", page.name)
+		}
+		if !strings.Contains(body, `class="btn sm lf-off" data-lf-reset`) {
+			t.Errorf("%s列表的「清除筛选」缺少 lf-off 初始状态", page.name)
+		}
+	}
+
+	app, err := ui.StaticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct{ what, re string }{
+		{"计数要留够宽度，文字在「共 N 条」和「显示 N / M 条」之间换时不重新分配空间",
+			`(?s)\.filter-bar \.lf-count\s*\{[^}]*min-width:\s*10em`},
+		{"没筛选时「清除筛选」要把位置占住（visibility 而不是 display）",
+			`(?s)\.filter-bar \[data-lf-reset\]\.lf-off\s*\{\s*visibility:\s*hidden`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(string(app)) {
+			t.Errorf("app.css 里缺少这条规则：%s", want.what)
+		}
+	}
+
+	js, err := ui.StaticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "reset.classList.toggle('lf-off'") {
+		t.Error("app.js 又用 hidden 切换「清除筛选」了，位置留不住")
+	}
+	// 提交前记住滚动位置：只有真要走的那次提交才记（被校验拦下的提交页面根本没动）。
+	if !strings.Contains(string(js), "sessionStorage.setItem('f2a:scroll'") {
+		t.Error("app.js 没有在提交前记住滚动位置")
+	}
+	if !strings.Contains(string(js), "if (e.defaultPrevented)") {
+		t.Error("没跳过被拦下的提交：那种提交页面还在原地，记下的位置会坑到下一次")
 	}
 }

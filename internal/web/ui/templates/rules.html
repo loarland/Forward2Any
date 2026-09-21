@@ -32,9 +32,10 @@
       <option value="1">有</option>
     </select>
   </label>
-  <button type="button" class="btn sm" data-lf-reset hidden>清除筛选</button>
+  <button type="button" class="btn sm lf-off" data-lf-reset>清除筛选</button>
   <span class="lf-spacer"></span>
-  <span class="lf-count muted" data-lf-count></span>
+  {{/* 和「源」页一样：计数先在服务端渲染好，别等 app.js 补 —— 补的那一下会挤动搜索框。 */}}
+  <span class="lf-count muted" data-lf-count>共 {{len .Rows}} 条</span>
 </div>
 
 <div class="panel" data-lf-empty hidden><div class="empty">没有匹配的规则，换个关键词或者清除筛选。</div></div>

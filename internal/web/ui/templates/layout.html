@@ -8,6 +8,18 @@
 {{/* 有些控件只在有 JS 时才有意义（列表筛选条、过滤条件行编辑器）。
      在这里先把标记挂上去，CSS 才能从首屏起就对，不会先闪一下再换样。 */}}
 <script>document.documentElement.className += ' js';</script>
+{{/* 表单提交换来的是**一份新文档**，滚动位置从 0 开始：用户在设置页拉到底点「保存」，
+     回来看到的就是「页面弹回顶部 + 中间浮个提示」，跟刷新过一样。
+     所以提交前把位置记进 sessionStorage（见 app.js 第 9 段），回到页面时在首帧之前还原。
+     这里先把 body 藏起来，免得「先画在顶部、再跳下去」那一帧被看见；
+     还原脚本就写在 body 末尾，两个脚本同生共死，不会只跑掉其中一个把页面留在隐藏态。 */}}
+<script>(function () {
+  try {
+    if (sessionStorage.getItem('f2a:scroll') !== null) {
+      document.documentElement.classList.add('restoring');
+    }
+  } catch (e) { /* 无痕模式等拿不到 sessionStorage：那就不还原，页面照常显示 */ }
+})();</script>
 <title>{{.Title}} · Forward2Any</title>
 {{/* 样式分四层，顺序不能换：
        pico.min.css           底座 —— 表单/表格/排版的默认样式，也是亮暗两套配色的来源
@@ -50,9 +62,32 @@
   <span>{{.Flash}}</span>
   <button class="toast-close" type="button" data-toast-close aria-label="关闭提示" title="关闭">×</button>
 </div>{{end}}
-{{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
+{{/* 出错也是同一个浮层，只是换成红的、不自动淡出：
+     错误条以前占在页面流里，一出现整页往下顶，再叠上「提交后回到顶部」，
+     看起来就像是刷新了一下然后弹个东西。不淡出是因为它得一直看得见，
+     直到用户看完关掉（× 或 Esc）—— 走掉的是成功提示，不是错误说明。 */}}
+{{if .Error}}<div class="toast err" role="alert" aria-live="assertive">
+  <span>{{.Error}}</span>
+  <button class="toast-close" type="button" data-toast-close aria-label="关闭提示" title="关闭">×</button>
+</div>{{end}}
 {{template "content" .}}
 </main>
+<script>(function () {
+  var el = document.documentElement;
+  if (!el.classList.contains('restoring')) {
+    return; // 这次不是「刚提交完回来的」，没什么要还原的
+  }
+  try {
+    var y = sessionStorage.getItem('f2a:scroll');
+    sessionStorage.removeItem('f2a:scroll'); // 一次性的：用过就扔，免得串到下一次
+    // 只有确实带着反馈回来时才还原（?ok= 的提示、或刚报的错）。
+    // 提交后被重定向到别处、或者干脆没提示的，位置留着也没意义。
+    if (y !== null && document.querySelector('.toast')) {
+      window.scrollTo(0, parseInt(y, 10) || 0);
+    }
+  } catch (e) { /* 读不到就算了，页面照常显示 */ }
+  el.classList.remove('restoring');
+})();</script>
 </body>
 </html>
 {{end}}

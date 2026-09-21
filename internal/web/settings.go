@@ -31,17 +31,24 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, errMsg, 
 		s.fail(w, "读取设置失败", err)
 		return
 	}
-	s.render(w, r, "settings", map[string]any{
+	data := map[string]any{
 		"Title":       "设置",
 		"Nav":         "settings",
 		"S":           settings,
 		"RunningPort": s.Port(),
 		"DBPath":      s.store.Path,
 		"Error":       errMsg,
-		"Notice":      notice,
 		"Palettes":    palettes,
 		"ThemeModes":  themeModes,
-	})
+	}
+	// 换端口那一次没法重定向（旧端口马上要关掉），只能就地渲染一条提示。
+	// 塞进 Flash 是为了让布局把它渲染成同一个浮层 —— 页面级的反馈全站只有这一种长相。
+	// 注意别写成 "Flash": ""：那样 render 会认为调用方已经给过了，
+	// ?ok= 那套固定文案（saved / imported / password_changed）就再也生效不了。
+	if notice != "" {
+		data["Flash"] = notice
+	}
+	s.render(w, r, "settings", data)
 }
 
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {

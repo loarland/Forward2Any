@@ -423,17 +423,45 @@ if bad:
 CURLCOPY
 pass "curl 示例带一键复制，按钮指的 id 存在且内容对得上这个源"
 
-# 提示（已保存 / 测试已发送）要做成不占位的浮层：它要是占页面流，出现时整页高度会变，
-# 跨过「要不要滚动条」那条线时经典滚动条会让整页横移一下。
+# 页面级的反馈（已保存 / 测试已发送 / 出错）只有一种长相：视口正中的浮层。
+# 它要是占页面流，出现时整页高度会变，跨过「要不要滚动条」那条线时经典滚动条会让整页横移；
+# 再加上表单提交后滚动位置归零，用户看到的就是「刷新了一下，然后弹个东西」。
 curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources?ok=tested" > "$WORK/flash.html"
 grep -q 'class="toast"' "$WORK/flash.html" || fail "保存/测试之后的提示不是浮层"
 grep -q 'role="status"' "$WORK/flash.html" || fail "浮层缺 role=status（它会自己消失，读屏得能念到）"
 grep -q 'class="alert ok"' "$WORK/flash.html" && fail "提示又变回会占位的横条了"
 grep -q 'data-toast-close' "$WORK/flash.html" || fail "浮层没有关闭按钮"
+# 出错也是同一个浮层（换成红的、不自动淡出），页面里不再有占位的 .alert.err
+curl -s -b "$JAR" -c "$JAR" -X POST \
+  --data-urlencode "name=坏电报" --data-urlencode "kind=telegram" \
+  --data-urlencode "usage=in" --data-urlencode "enabled=1" \
+  "$BASE/sources" > "$WORK/flash-err.html"
+grep -q 'class="toast err"' "$WORK/flash-err.html" || fail "保存失败时不是浮层提示"
+grep -q 'role="alert"' "$WORK/flash-err.html" || fail "出错浮层缺 role=alert"
+grep -q 'class="alert err"' "$WORK/flash-err.html" && fail "页面级的错误又变回占位横条了"
+# 设置页的「已保存」以前是页面顶端一条 .alert.ok，现在是同一个浮层
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings?ok=saved" > "$WORK/flash-settings.html"
+grep -q 'class="toast"' "$WORK/flash-settings.html" || fail "设置页保存后的提示不是浮层"
+grep -q 'class="alert' "$WORK/flash-settings.html" && fail "设置页里还有占位的 .alert"
+# 提交前记住滚动位置、回到页面时在首帧之前还原：两段内联脚本缺一不可
+grep -q "classList.add('restoring')" "$WORK/flash.html" || fail "缺少「带着滚动位置回来」的标记"
+grep -q "classList.remove('restoring')" "$WORK/flash.html" || fail "还原之后没把标记摘掉（页面会一直藏着）"
+[ "$(grep -c "sessionStorage.getItem('f2a:scroll')" "$WORK/flash.html")" = "2" ] \
+  || fail "读滚动位置的脚本应当是 head / body 末尾各一处"
 curl -fsS -b "$JAR" "$BASE/static/app.css" > "$WORK/app.css"
 grep -q 'html:not(.js) .toast-close' "$WORK/app.css" || fail "无 JS 时没有把关闭按钮藏掉（点了没反应）"
 grep -q 'overflow-y: scroll' "$WORK/app.css" || fail "没有给滚动条占住槽位，内容宽度还会跟着页面高度变"
-pass "提示是不占位的浮层（带关闭按钮，无 JS 时藏掉；滚动条槽位常驻）"
+grep -q 'animation: none' "$WORK/app.css" || fail "出错浮层会自己淡出：错误提示该一直看得见"
+grep -q '.restoring body' "$WORK/app.css" || fail "还原滚动位置时没有先把页面藏起来"
+curl -fsS "$BASE/static/app.js" > "$WORK/app.js"
+grep -q "reset.classList.toggle('lf-off'" "$WORK/app.js" || fail "「清除筛选」又用 hidden 藏了，位置留不住"
+grep -q "sessionStorage.setItem('f2a:scroll'" "$WORK/app.js" || fail "提交前没有记住滚动位置"
+# 筛选条那一行的几何在首帧就得定死：以前 app.js 补上「共 N 条」会把搜索框挤窄 20px，
+# 每次点「发送测试」跳回来都看见这一行横着抖一下（真机量过）。
+grep -q 'data-lf-count>共 ' "$WORK/sources.html" || fail "源列表的计数还等着 JS 补，补的那一下会挤动搜索框"
+grep -q 'class="btn sm lf-off" data-lf-reset' "$WORK/sources.html" || fail "「清除筛选」没有先把位置占住"
+grep -q 'min-width: 10em' "$WORK/app.css" || fail "计数的盒子没留宽，筛选时搜索框还会被推着走"
+pass "反馈一律是视口正中的浮层（出错版不淡出），提交后还原滚动位置，筛选条几何首帧定死"
 
 # 投递日志的关键字搜索走服务端（记录会一直涨、还要分页），得真查一次库。
 curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=mock" "$BASE/deliveries" > "$WORK/dl_hit.html"
@@ -653,8 +681,8 @@ echo
 echo "== Telegram 发送 =="
 # 先用界面把几种填错的情况挡一遍：这些错误必须在保存时就说清楚，
 # 而不是等到投递失败才发现（投递日志里只剩一句 Telegram 的报错）。
-# 保存失败时页面顶部会渲染一条 .alert.err；保存成功是 303 + 空响应体（没有这条）。
-# 「被挡下」= 响应里带着错误条 —— 只看状态码不够，校验失败的响应也是 200。
+# 保存失败时页面上会浮一条 .toast.err；保存成功是 303 + 空响应体（没有这条）。
+# 「被挡下」= 响应里带着错误浮层 —— 只看状态码不够，校验失败的响应也是 200。
 # 调用方传的字段放在前面：表单取值取的是第一个，这样才能覆盖掉下面的默认值。
 tg_reject() {
   curl -s -b "$JAR" -c "$JAR" -o "$WORK/tg-reject.html" -X POST \
@@ -667,7 +695,7 @@ tg_reject() {
     --data-urlencode "tg_chat_id=-1001234567890" \
     --data-urlencode "tg_endpoint=http://127.0.0.1:$MOCK_PORT/bot" \
     "$BASE/sources"
-  grep -q 'class="alert err"' "$WORK/tg-reject.html"
+  grep -q 'class="toast err"' "$WORK/tg-reject.html"
 }
 
 tg_reject --data-urlencode "usage=in" || fail "Telegram 类型不该允许用作接收源"

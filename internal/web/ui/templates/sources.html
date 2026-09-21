@@ -38,9 +38,11 @@
       <option value="0">停用</option>
     </select>
   </label>
-  <button type="button" class="btn sm" data-lf-reset hidden>清除筛选</button>
+  <button type="button" class="btn sm lf-off" data-lf-reset>清除筛选</button>
   <span class="lf-spacer"></span>
-  <span class="lf-count muted" data-lf-count></span>
+  {{/* 计数得由服务端先渲染出来：留空等 app.js 补字的话，补上的那一刻会把搜索框挤窄 20px，
+       每次加载都横着抖一下（真机量过）。app.js 之后覆盖的是同样的文案。 */}}
+  <span class="lf-count muted" data-lf-count>共 {{len .Rows}} 条</span>
 </div>
 
 <div class="panel" data-lf-empty hidden><div class="empty">没有匹配的源，换个关键词或者清除筛选。</div></div>

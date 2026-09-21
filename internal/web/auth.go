@@ -199,8 +199,8 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.limiter.blocked(ip) {
 		s.render(w, r, "login", map[string]any{
-			"Title": "登录",
-			"Error": "失败次数过多，请 5 分钟后再试",
+			"Title":      "登录",
+			"LoginError": "失败次数过多，请 5 分钟后再试",
 		})
 		return
 	}
@@ -220,7 +220,7 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	if user != settings.AdminUser || !store.CheckPassword(settings.AdminPassHash, pass) {
 		s.limiter.fail(ip)
 		s.log.Warn("登录失败", "user", user, "ip", ip)
-		s.render(w, r, "login", map[string]any{"Title": "登录", "Error": "用户名或密码错误"})
+		s.render(w, r, "login", map[string]any{"Title": "登录", "LoginError": "用户名或密码错误"})
 		return
 	}
 

@@ -191,6 +191,17 @@
 .filter-bar .lf-count { font-size: 12.5px; white-space: nowrap; padding-bottom: 7px; }
 .filter-bar .lf-actions button, .filter-bar .lf-actions .btn { min-height: 32px; }
 
+/* 这一行的几何必须在首帧就定死，否则每次加载都会横着抖一下（真机实测过）：
+   - 计数以前是空的、等 app.js 补文字，补上「共 3 条」的那一刻把搜索框挤窄 20px。
+     现在服务端直接渲染出来，app.js 只是覆盖同样的字，加载时就不会动了。
+   - 计数的盒子再留够宽度：筛选时文字在「共 N 条」↔「显示 N / M 条」之间换，
+     盒子不跟着变，搜索框也就不会被推着走。
+   - 「清除筛选」始终占住自己那一格，只是用了才看得见。它的出现/消失同样是 72px 的位移。
+     这里用 visibility 而不是 hidden 属性：位置得留着，同时又点不到、Tab 也停不到。
+     （Pico 对所有 [hidden] 都是 display:none !important，用属性就没法把位置留住。） */
+.filter-bar .lf-count { flex: 0 0 auto; min-width: 10em; text-align: right; }
+.filter-bar [data-lf-reset].lf-off { visibility: hidden; }
+
 /* 客户端筛选条没有服务端兜底，没 JS 时整条藏掉，免得摆一排点不动的控件。
    这条必须排在 .filter-bar 后面，两者特异度相同，靠顺序分胜负。 */
 [data-list-filter] { display: none; }
@@ -398,13 +409,15 @@ button.add, .btn.add {
 button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-color: var(--accent); }
 
 /* ---------- 消息与说明 ----------
-   两套东西，别混：
-   - .alert 是「发生了什么/要注意什么」的状态消息（成功、失败、警告），带语义色。
+   三套东西，别混：
+   - .toast 是「刚刚发生了什么」的一次性反馈（已保存 / 测试已发送 / 出错），浮在视口正中，
+            不占页面流里的位置，所以出现时页面不会动。
+   - .alert 是贴在页面里某处的状态说明：登录卡片里的报错、规则表单里过滤条件的行内校验、
+            投递详情里那条历史错误。它们跟被说的东西在同一处，不该飘走。
    - .note  是「这一块是干什么的、变量怎么填」的参考说明，全站一种样式。
    以前说明文字一会儿是裸段落、一会儿是 alert info、一会儿是 hint-block，
    同一个页面上三种长相，所以统一到这里。 */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13.5px; }
-.alert.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-text); }
 .alert.err { background: var(--err-bg); border: 1px solid var(--err-line); color: var(--err-text); }
 .alert.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-text); }
 
@@ -438,6 +451,14 @@ button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-colo
   transform: translate(-50%, -50%);
   animation: toast-life 4.2s ease forwards;
 }
+/* 出错那版：同一套位置和长相，换个色，并且**不自动淡出**。
+   成功提示看一眼就够了，报错得一直挂在那儿等用户看完（× 或 Esc 关掉）。 */
+.toast.err {
+  background: var(--err-bg);
+  border-color: var(--err-line);
+  color: var(--err-text);
+  animation: none;
+}
 .toast-close {
   pointer-events: auto;
   flex: none;
@@ -456,8 +477,13 @@ button.add:hover, .btn.add:hover { background: var(--accent-soft-2); border-colo
   cursor: pointer;
   opacity: .65;
 }
-.toast-close:hover { opacity: 1; background: var(--ok-line); }
+/* 取当前的文字色来配底色：成功版和出错版各是自己那一套，不用写两遍。 */
+.toast-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 16%, transparent); }
 html:not(.js) .toast-close { display: none; }
+
+/* 从表单提交回到页面时，先藏住再还原滚动位置（见 layout.html 开头那段内联脚本）：
+   不藏的话浏览器会先把新文档画在顶部，然后我们才跳回去，那一帧就是「页面刷新过」的观感。 */
+.restoring body { visibility: hidden; }
 
 /* 纯淡入淡出：最后一帧的 visibility: hidden 才是「真的消失」（只把 opacity 归零的话
    元素还在，会继续吃掉指针事件）；forwards 让这一帧停住。 */
