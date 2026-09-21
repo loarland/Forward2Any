@@ -31,15 +31,17 @@
 #   F2A_SKIP_CHECKSUM   设 1 跳过 sha256 校验（不建议）
 #
 # 这个脚本只做四件事：下载发布包、装二进制、写单元文件、启服务。
-# 落地的四个路径是约定死的，forward2any.service 和 README 都按它来：
+# 落地的路径是约定死的，forward2any.service 和 README 都按它来：
 #   二进制 /usr/local/bin/f2a，数据 /var/lib/forward2any，
-#   环境变量 /etc/forward2any.env，运行用户 f2a。
+#   环境变量 /etc/forward2any.env，运行用户 f2a，
+#   许可原文 /usr/local/share/doc/forward2any/LICENSE。
 
 set -euo pipefail
 
 REPO="${F2A_REPO:-loarland/Forward2Any}"
 SERVICE="forward2any"
 BIN="/usr/local/bin/f2a"
+DOC_DIR="/usr/local/share/doc/forward2any"
 UNIT="/etc/systemd/system/${SERVICE}.service"
 ENV_FILE="/etc/forward2any.env"
 DATA_DIR="${F2A_DATA_DIR:-/var/lib/forward2any}"
@@ -180,6 +182,13 @@ F2A_ADMIN_PASSWORD=$ADMIN_PASS
 EOF
   chmod 0600 "$ENV_FILE"
   say "    写了环境变量文件 $ENV_FILE（0600）"
+}
+
+install_docs() { # $1=解包出来的目录
+  [ -f "$1/LICENSE" ] || return 0
+  install -d -m 0755 "$DOC_DIR"
+  install -m 0644 "$1/LICENSE" "$DOC_DIR/LICENSE"
+  say "    许可证 → $DOC_DIR/LICENSE"
 }
 
 install_unit() { # $1=解包出来的目录
@@ -332,6 +341,7 @@ cmd_install() { # $1=upgrade 时为 1，表示"已有安装，只换二进制"
   install -m 0755 "$TMP_DIR/$pkg/f2a" "$BIN.new"
   mv -f "$BIN.new" "$BIN"
   say "    二进制 → $BIN"
+  install_docs "$TMP_DIR/$pkg"
   write_env_file
   # 环境变量文件是权威来源：里面的端口和数据目录决定单元文件怎么写
   DATA_DIR="$(env_value F2A_DATA_DIR)"; DATA_DIR="${DATA_DIR:-$DATA_DIR}"
@@ -374,6 +384,8 @@ cmd_uninstall() {
   say "    已停用并删掉单元文件"
   rm -f "$BIN"
   say "    已删掉 $BIN"
+  rm -rf "$DOC_DIR"
+  say "    已删掉 $DOC_DIR"
 
   if [ "$purge" = "1" ]; then
     step "清理数据（--purge）"

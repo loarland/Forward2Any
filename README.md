@@ -212,6 +212,7 @@ F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" ./f2a
 | 环境变量 | `/etc/forward2any.env`（0600，只在首次启动时作为引导值） |
 | systemd 单元 | `/etc/systemd/system/forward2any.service` |
 | 运行用户 | `f2a`（系统用户，没有登录 shell） |
+| 许可原文 | `/usr/local/share/doc/forward2any/LICENSE`（Apache-2.0 要求随分发附带） |
 
 ### 手动安装
 
