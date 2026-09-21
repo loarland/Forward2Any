@@ -4,8 +4,8 @@
 #   docker pull ghcr.io/loarland/forward2any:latest
 #
 # 触发方式：
-#   push 到 main  ->  latest、main、sha-<短 SHA>
-#   打 v1.2.3 标签 ->  1.2.3、sha-<短 SHA>（标签就在默认分支 HEAD 上时，latest 也会跟着一起动）
+#   push 到 main  ->  main、sha-<短 SHA>
+#   打 v1.2.3 标签 ->  latest、1.2.3、sha-<短 SHA>（latest = 最新发布的版本，只在打标签时动）
 #   手动触发（Actions 页面上的 Run workflow）
 # 不打 1.2 这种「大版本.次版本」的浮动标签：只留 latest 一个浮动标签，
 # 其余都指向确定的版本号，省得让人猜某个 1.2 到底停在哪一版。
@@ -71,7 +71,10 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            # latest 表示「最新发布的版本」，所以只在打版本标签时更新；
+            # main 上最后一个提交由 main 这个标签负责。两边都推的话，
+            # latest 到底停在哪次构建就取决于谁后跑完（v1.0.4 那次的坑）。
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha,prefix=sha-,format=short
