@@ -99,6 +99,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" ./dist/*.tar.gz ./dist/checksums.txt \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          assets=(./dist/*.tar.gz ./dist/checksums.txt)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # release 的正文就是注解 tag 的正文（打标签时写的变更说明）。--generate-notes 只会写
+            # 一行 Full Changelog，把 tag 正文整个丢掉，所以这里自己拼：tag 正文 + 比较链接。
+            # 第一行如果只是重复标签名（v1.0.3 那种写法）就去掉，release 标题已经写着了。
+            prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^")"
+            {
+              git tag -l --format='%(contents)' "$GITHUB_REF_NAME" \
+                | awk -v tag="$GITHUB_REF_NAME" 'NR==1 && $0==tag {next} {print}'
+              printf '\n\n**Full Changelog**: %s/compare/%s...%s\n' \
+                "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME"
+            } > notes.md
+            cat notes.md
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
