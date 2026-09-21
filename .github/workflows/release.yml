@@ -73,6 +73,14 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
+      # gh release create 得站在一个 git 仓库里（--generate-notes 要读标签之间的提交）
+      # 没有 .git 时它会报 "failed to run git: fatal: not a git repository"。
+      # fetch-depth: 0 是为了让它看得到上一个标签。
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: 收集所有产物
         uses: actions/download-artifact@v8
         with:
