@@ -887,7 +887,7 @@ go test -race ./...
 # 跑完「接收 → 匹配 → 转发 → 落库」整条链路
 bash scripts/e2e.sh
 
-# Docker 端到端：镜像构建、非 root 运行、容器健康检查、容器间转发、卷持久化
+# Docker 端到端：镜像构建、root 运行、容器健康检查、容器间转发、卷持久化
 bash scripts/e2e-docker.sh
 ```
 
