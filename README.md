@@ -245,8 +245,12 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now forward2any
 f2a version                                      # 确认装上的是哪个版本
-f2a healthcheck                                  # 健康检查（按数据库里的实际端口探）
+curl -fsS http://127.0.0.1:16000/healthz         # 探活，返回 ok 就对了
 ```
+
+> 想用二进制自带的探活（`f2a healthcheck`，它按数据库里记的实际端口探、设置页改过端口也不会误判）
+> 请**以服务用户的身份**跑：`sudo -u f2a env F2A_DATA_DIR=/var/lib/forward2any f2a healthcheck`。
+> 用 root 跑它会在数据目录里留下 root 属主的 `-wal`/`-shm`，之后服务反而打不开库。
 
 > `F2A_BASE_URL` 一定要填外部真正能访问到的地址（域名或公网 IP）—— 回调 URL 和 curl 示例
 > 都按它生成。填成默认的 `localhost` 的话，回调地址拿去给 GitHub / Stripe 是用不了的。
@@ -254,11 +258,12 @@ f2a healthcheck                                  # 健康检查（按数据库�
 ### 平时怎么管
 
 ```bash
-systemctl status forward2any            # 状态
-journalctl -u forward2any -f            # 跟日志（启动失败也看这里）
-sudo systemctl restart forward2any      # 重启
-sudo systemctl stop forward2any         # 停
-sudo bash install.sh upgrade            # 升级（= 重跑一键脚本，数据和配置不动）
+systemctl status forward2any                    # 状态
+journalctl -u forward2any -f                    # 跟日志（启动失败也看这里）
+sudo systemctl restart forward2any              # 重启
+sudo systemctl stop forward2any                 # 停
+sudo bash install.sh upgrade                    # 升级（= 重跑一键脚本，数据和配置不动）
+curl -fsS http://127.0.0.1:16000/healthz        # 探活
 ```
 
 ### 单元文件里做了什么

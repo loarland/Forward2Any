@@ -121,11 +121,18 @@ var migrations = [][]string{
 	},
 }
 
+// DBPath 是数据目录里那个库文件的路径。
+//
+// 单独开出来是给 healthcheck 用的：它只想「读一下端口」，库还没建的时候
+// 不该顺手替服务把库（以及 -wal/-shm）建出来 —— 调用它的人可能是 root，
+// 建出来的文件属主不对，真正的服务就打不开了。
+func DBPath(dataDir string) string { return filepath.Join(dataDir, "f2a.db") }
+
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建数据目录: %w", err)
 	}
-	path := filepath.Join(dataDir, "f2a.db")
+	path := DBPath(dataDir)
 
 	// WAL + busy_timeout 让「后台读」和「投递写」可以并发；
 	// _txlock=immediate 让写事务一开始就拿写锁，避免升级锁时 SQLITE_BUSY。

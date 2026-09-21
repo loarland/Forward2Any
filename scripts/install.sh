@@ -112,6 +112,12 @@ sha256_of() { # 优先 sha256sum，其次 shasum，最后 openssl
   fi
 }
 
+# 从环境变量文件里取值（文件不存在或没这一项就打印空）
+env_value() {
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | head -1
+}
+
 ensure_user() {
   if id -u "$RUN_USER" >/dev/null 2>&1; then
     return
@@ -183,10 +189,14 @@ install_unit() { # $1=解包出来的目录
   if [ "$DATA_DIR" != "/var/lib/forward2any" ]; then
     sed -i "s|/var/lib/forward2any|$DATA_DIR|g" "$UNIT"
   fi
-  # 端口小于 1024 时需要这一个能力才能绑定；默认 16000 不需要，所以默认不给
-  if [ "$PORT" -lt 1024 ]; then
-    sed -i "s|^\[Service\]$|[Service]\n# F2A_PORT=$PORT 小于 1024，绑定低端口需要这个能力\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE|" "$UNIT"
-    say "    端口 $PORT < 1024，单元里加了 CAP_NET_BIND_SERVICE"
+  # 端口小于 1024 时需要这一个能力才能绑定；默认 16000 不需要，所以默认不给。
+  # 以环境变量文件里的端口为准 —— 已经有文件时（升级/重装）脚本上给的 F2A_PORT 不生效。
+  local port
+  port="$(env_value F2A_PORT)"
+  [ -n "$port" ] || port="$PORT"
+  if [ "$port" -lt 1024 ]; then
+    sed -i "s|^\[Service\]$|[Service]\n# F2A_PORT=$port 小于 1024，绑定低端口需要这个能力\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE|" "$UNIT"
+    say "    端口 $port < 1024，单元里加了 CAP_NET_BIND_SERVICE"
   fi
   grep -qx "ExecStart=$BIN" "$UNIT" \
     || die "单元文件里的 ExecStart 不是 $BIN，跟本脚本的约定对不上，请检查 $UNIT"
@@ -206,11 +216,26 @@ start_service() {
   systemctl restart "$SERVICE"
 }
 
+# 以**服务用户**的身份跑 healthcheck。
+#
+# 两件事都得注意：数据目录要显式给（脚本自己的环境里没有 F2A_DATA_DIR，不给就退回默认端口），
+# 身份要切成 f2a —— 这个子命令会碰库和 -wal/-shm，用 root 跑会把它们建成 root 的，
+# 之后服务自己反而打不开（第一次写这个脚本就这么翻的车）。
+healthcheck_now() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$RUN_USER" -- env F2A_DATA_DIR="$DATA_DIR" "$BIN" healthcheck
+  elif command -v su >/dev/null 2>&1; then
+    su -s /bin/sh "$RUN_USER" -c "F2A_DATA_DIR='$DATA_DIR' '$BIN' healthcheck"
+  else
+    F2A_DATA_DIR="$DATA_DIR" "$BIN" healthcheck
+  fi
+}
+
 wait_healthy() {
+  sleep 1   # 让服务先把库建出来（首次启动时库还不存在）
   for _ in $(seq 40); do
-    # 不带 --url：它会按数据库里记着的实际端口来探，设置页里改过端口也不会误判。
-    # 数据目录得显式给 —— 脚本自己的环境里没有 F2A_DATA_DIR，不给就退回默认端口了。
-    if F2A_DATA_DIR="$DATA_DIR" "$BIN" healthcheck >/dev/null 2>&1; then
+    # 不带 --url：它会按数据库里记着的实际端口来探，设置页里改过端口也不会误判
+    if healthcheck_now >/dev/null 2>&1; then
       return 0
     fi
     if ! systemctl is-active --quiet "$SERVICE"; then
@@ -307,8 +332,10 @@ cmd_install() { # $1=upgrade 时为 1，表示"已有安装，只换二进制"
   install -m 0755 "$TMP_DIR/$pkg/f2a" "$BIN.new"
   mv -f "$BIN.new" "$BIN"
   say "    二进制 → $BIN"
-  install_unit "$TMP_DIR/$pkg"
   write_env_file
+  # 环境变量文件是权威来源：里面的端口和数据目录决定单元文件怎么写
+  DATA_DIR="$(env_value F2A_DATA_DIR)"; DATA_DIR="${DATA_DIR:-$DATA_DIR}"
+  install_unit "$TMP_DIR/$pkg"
 
   step "启动"
   start_service
@@ -330,7 +357,7 @@ cmd_status() {
   systemctl status "$SERVICE" --no-pager --lines=5 || true
   say ""
   say "== 健康检查 =="
-  if [ -x "$BIN" ] && F2A_DATA_DIR="$DATA_DIR" "$BIN" healthcheck; then
+  if [ -x "$BIN" ] && healthcheck_now; then
     say "✅ 通过"
   else
     say "❌ 没通过"

@@ -64,11 +64,18 @@ func healthcheck(args []string) int {
 	if target == "" {
 		port := 16000
 		if cfg, err := config.FromEnv(); err == nil {
-			if st, err := store.Open(cfg.DataDir); err == nil {
-				if s, err := st.Settings(); err == nil {
-					port = s.WebPort
+			port = cfg.Port
+			// 只在库**已经存在**时才去读端口。库还不存在就直接用配置里的端口：
+			// 这里的 store.Open 会把库建出来（还有 -wal/-shm），而跑 healthcheck 的
+			// 可能是 root 或别的用户 —— 建出来的文件属主不对，服务反而打不开库了
+			// （systemd 的 install.sh 上真踩过：库是 root 0600，f2a 用户连不上）。
+			if _, err := os.Stat(store.DBPath(cfg.DataDir)); err == nil {
+				if st, err := store.Open(cfg.DataDir); err == nil {
+					if s, err := st.Settings(); err == nil {
+						port = s.WebPort
+					}
+					st.Close()
 				}
-				st.Close()
 			}
 		}
 		target = fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
