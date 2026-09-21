@@ -162,7 +162,7 @@ docker run -d --name forward2any --restart unless-stopped \
 | --- | --- |
 | `latest` / `main` | 每次推送到 main |
 | `sha-a0f1322` | 对应某一次提交，想固定版本就用它 |
-| `1.0.5` / `1.0` | 仓库打了 `v1.0.5` 这样的标签时 |
+| `1.0.5` | 仓库打了 `v1.0.5` 这样的标签时（每个版本一个标签，没有 `1.0` 这种浮动标签） |
 
 想自己在本地从源码构建（改了代码要验证），把 compose 里的 `image:` 那行换成 `build: .` 即可。
 
@@ -776,7 +776,7 @@ docker run -d --name forward2any --restart unless-stopped \
 ```
 
 用 compose 的话一条命令就够：`docker compose pull && docker compose up -d`。
-想固定版本就把 `latest` 换成 `1.0.5` / `1.0` 或 `sha-a0f1322` 这样的标签，要升级时再手动改。
+想固定版本就把 `latest` 换成 `1.0.5` 或 `sha-a0f1322` 这样的标签，要升级时再手动改。
 
 **从源码构建**：拉取新代码后重新构建：
 

@@ -5,8 +5,10 @@
 #
 # 触发方式：
 #   push 到 main  ->  latest、main、sha-<短 SHA>
-#   打 v1.2.3 标签 ->  1.2.3、1.2（latest 只在默认分支上打）
+#   打 v1.2.3 标签 ->  1.2.3、sha-<短 SHA>（标签就在默认分支 HEAD 上时，latest 也会跟着一起动）
 #   手动触发（Actions 页面上的 Run workflow）
+# 不打 1.2 这种「大版本.次版本」的浮动标签：只留 latest 一个浮动标签，
+# 其余都指向确定的版本号，省得让人猜某个 1.2 到底停在哪一版。
 # 名字用 ASCII：它同时是 Actions 页面上的标题和 README 里那个徽章的文案，
 # 徽章是 GitHub 生成的 SVG，字体栈里没有中文字形，写成中文会显示成一排方框。
 name: Docker image
@@ -72,7 +74,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short
 
       - name: 构建并推送
