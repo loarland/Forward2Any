@@ -104,6 +104,12 @@ var migrations = [][]string{
 			value TEXT NOT NULL
 		)`,
 	},
+	// v2：源上多一个「走代理发送」的开关。
+	// 不能改 v1 —— 已经发出去的版本就是那个形状，已有部署的库停在 user_version=1，
+	// 只有这里加一条 ALTER 才能把它们升级上来。
+	{
+		`ALTER TABLE sources ADD COLUMN use_proxy INTEGER NOT NULL DEFAULT 0`,
+	},
 }
 
 func Open(dataDir string) (*Store, error) {

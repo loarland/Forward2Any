@@ -86,12 +86,19 @@ func (s *Server) handleSourceForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderSourceForm(w http.ResponseWriter, r *http.Request, src *store.Source, errMsg string) {
+	settings, err := s.store.Settings()
+	if err != nil {
+		s.fail(w, "读取设置失败", err)
+		return
+	}
 	s.render(w, r, "source_form", map[string]any{
 		"Title": "源",
 		"Nav":   "sources",
 		"Src":   src,
 		"IsNew": src.ID == 0,
 		"Error": errMsg,
+		// 空串表示设置里还没配代理，前端据此把勾选框禁用掉。
+		"Proxy": settings.ProxyURL(),
 	})
 }
 
@@ -206,6 +213,15 @@ func (s *Server) sourceFromForm(r *http.Request, base *store.Source) (*store.Sou
 	v.AuthHeader = formValue(r, "auth_header")
 	v.AuthSecret = formValue(r, "auth_secret")
 	v.IPAllow = formValue(r, "ip_allow")
+
+	// 「走代理发送」只在 webhook 且用途包含发送时才认（表单上也只有那时才显示）。
+	// 其它情况一律沿用原值：用途改成纯接收不该把这个勾悄悄清掉，
+	// 改回发送时它还在这儿。
+	if v.Kind == "webhook" && v.CanSend() {
+		v.UseProxy = formBool(r, "use_proxy")
+	} else {
+		v.UseProxy = base.UseProxy
+	}
 
 	v.SMTPHost = formValue(r, "smtp_host")
 	v.SMTPPort = formInt(r, "smtp_port", 587)

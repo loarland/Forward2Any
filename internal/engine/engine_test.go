@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -573,5 +574,126 @@ func TestValidateHeaderTemplatesAllowsDeepFields(t *testing.T) {
 	err := ValidateHeaderTemplates(`{"X-Repo":"{{.Payload.repository.full_name}}","X-Id":"{{index .Payload.commits 0}}"}`)
 	if err != nil {
 		t.Errorf("引用真实字段的请求头模板不该被拒: %v", err)
+	}
+}
+
+// 代理这条路要真跑一遍：起一个正向代理，只有当请求确实落在它上面才算数。
+//
+// 同时钉住三件事：
+//  1. 勾了「通过代理发送」的源走代理；
+//  2. 没勾的源照旧直连；
+//  3. 用途不含发送的源即使库里还留着那个勾，也被忽略（直连）。
+func TestProxyUsedOnlyByOptedInSendingSources(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	var targetHits, proxyHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	// 极简正向代理：明文 HTTP 请求进来时 r.URL 是绝对地址（http://host/path），
+	// 把它原样转给目标即可 —— 这正是「请求经过了代理」的证据。
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host == "" {
+			http.Error(w, "不是绝对地址，说明这不是代理请求", http.StatusBadRequest)
+			return
+		}
+		proxyHits.Add(1)
+		r.RequestURI = "" // RoundTrip 不接受带 RequestURI 的请求
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}))
+	defer proxy.Close()
+
+	// 设置里配上代理（地址里不带 http://，跟设置页的填法一致）
+	if err := st.SetSettings(map[string]string{
+		store.KeyProxyType: "http",
+		store.KeyProxyAddr: strings.TrimPrefix(proxy.URL, "http://"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sources := []*store.Source{
+		{Name: "勾了代理的发送源", Kind: "webhook", Usage: "out", Enabled: true,
+			URL: target.URL, HTTPMethod: "POST", Headers: "{}", UseProxy: true},
+		{Name: "没勾代理的发送源", Kind: "webhook", Usage: "out", Enabled: true,
+			URL: target.URL, HTTPMethod: "POST", Headers: "{}"},
+		{Name: "只接收但留着勾", Kind: "webhook", Usage: "in", Enabled: true, Slug: "in-proxy",
+			URL: target.URL, HTTPMethod: "POST", Headers: "{}", UseProxy: true},
+	}
+	for _, s := range sources {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// 直接调 attempt，不用等后台 worker，时序完全确定。
+	deliver := func(out *store.Source) *store.Delivery {
+		d := &store.Delivery{
+			OutSourceID: out.ID, Status: store.StatusPending,
+			Rendered: `{"a":1}`, ReqHeaders: `{}`, Subject: "t",
+		}
+		if err := st.CreateDelivery(d); err != nil {
+			t.Fatal(err)
+		}
+		eng.attempt(d)
+		if d.Status != store.StatusSuccess {
+			t.Fatalf("源 %q 投递失败：%s", out.Name, d.LastError)
+		}
+		return d
+	}
+
+	deliver(sources[0])
+	if got := proxyHits.Load(); got != 1 {
+		t.Fatalf("勾了代理的源应当走代理，代理只收到 %d 次请求", got)
+	}
+
+	deliver(sources[1])
+	if got := proxyHits.Load(); got != 1 {
+		t.Errorf("没勾代理的源不该走代理，代理收到 %d 次请求", got)
+	}
+
+	// 用途是「接收」：勾选被忽略，直连。
+	deliver(sources[2])
+	if got := proxyHits.Load(); got != 1 {
+		t.Errorf("用途不含发送的源不该走代理，代理收到 %d 次请求", got)
+	}
+	if got := targetHits.Load(); got != 3 {
+		t.Errorf("三条投递都该到达目标，实际 %d 次", got)
+	}
+
+	// 代理连不上时必须报错，而不是偷偷改回直连（设置页里就是这么写的）。
+	if err := st.SetSetting(store.KeyProxyAddr, "127.0.0.1:1"); err != nil {
+		t.Fatal(err)
+	}
+	d := &store.Delivery{
+		OutSourceID: sources[0].ID, Status: store.StatusPending,
+		Rendered: `{"a":1}`, ReqHeaders: `{}`,
+	}
+	if err := st.CreateDelivery(d); err != nil {
+		t.Fatal(err)
+	}
+	eng.attempt(d)
+	if d.Status == store.StatusSuccess {
+		t.Error("代理连不上时不该报告投递成功")
+	}
+	if d.LastError == "" {
+		t.Error("代理失败应当记下原因")
+	}
+	if got := targetHits.Load(); got != 3 {
+		t.Errorf("代理失败时不该偷偷直连，目标收到 %d 次请求", got)
 	}
 }

@@ -24,6 +24,10 @@ type Source struct {
 	AuthSecret string `json:"auth_secret"`
 	IPAllow    string `json:"ip_allow"`
 
+	// UseProxy 表示这个源发送时走设置里配的代理。
+	// 只有用途包含发送的源才认这个值，其它情况下引擎会忽略它。
+	UseProxy bool `json:"use_proxy"`
+
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
 	SMTPUser string `json:"smtp_user"`
@@ -53,7 +57,7 @@ func (s *Source) PollsMail() bool {
 }
 
 const sourceCols = `id, name, kind, usage, enabled, slug, url, http_method, headers,
-	auth_mode, auth_header, auth_secret, ip_allow,
+	auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 	smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 	imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 	created_at, updated_at`
@@ -62,7 +66,7 @@ func scanSource(sc interface{ Scan(...any) error }) (*Source, error) {
 	var v Source
 	err := sc.Scan(
 		&v.ID, &v.Name, &v.Kind, &v.Usage, &v.Enabled, &v.Slug, &v.URL, &v.HTTPMethod, &v.Headers,
-		&v.AuthMode, &v.AuthHeader, &v.AuthSecret, &v.IPAllow,
+		&v.AuthMode, &v.AuthHeader, &v.AuthSecret, &v.IPAllow, &v.UseProxy,
 		&v.SMTPHost, &v.SMTPPort, &v.SMTPUser, &v.SMTPPass, &v.SMTPTLS, &v.MailFrom, &v.MailTo,
 		&v.IMAPHost, &v.IMAPPort, &v.IMAPUser, &v.IMAPPass, &v.IMAPTLS, &v.IMAPFolder, &v.IMAPInterval,
 		&v.CreatedAt, &v.UpdatedAt,
@@ -142,13 +146,13 @@ func saveSource(db execer, v *Source) error {
 		v.CreatedAt = v.UpdatedAt
 		res, err := db.Exec(`INSERT INTO sources (
 			name, kind, usage, enabled, slug, url, http_method, headers,
-			auth_mode, auth_header, auth_secret, ip_allow,
+			auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 			smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 			imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 			created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
-			v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow,
+			v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 			v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 			v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 			v.CreatedAt, v.UpdatedAt,
@@ -162,13 +166,13 @@ func saveSource(db execer, v *Source) error {
 
 	_, err := db.Exec(`UPDATE sources SET
 		name=?, kind=?, usage=?, enabled=?, slug=?, url=?, http_method=?, headers=?,
-		auth_mode=?, auth_header=?, auth_secret=?, ip_allow=?,
+		auth_mode=?, auth_header=?, auth_secret=?, ip_allow=?, use_proxy=?,
 		smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, mail_from=?, mail_to=?,
 		imap_host=?, imap_port=?, imap_user=?, imap_pass=?, imap_tls=?, imap_folder=?, imap_interval=?,
 		updated_at=?
 		WHERE id=?`,
 		v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
-		v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow,
+		v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 		v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 		v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 		v.UpdatedAt, v.ID,

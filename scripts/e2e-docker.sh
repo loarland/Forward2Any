@@ -132,6 +132,20 @@ grep -q f2a_session "$JAR" || fail "登录后没有拿到会话 cookie"
 pass "登录成功"
 
 echo
+echo "== 代理相关界面 =="
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/settings" > "$WORK/settings.html"
+grep -q 'name="proxy_type"' "$WORK/settings.html" || fail "设置页没有网络代理面板"
+for t in none http https socks5; do
+  grep -q "value=\"$t\"" "$WORK/settings.html" || fail "代理类型下拉里缺少 $t"
+done
+# 全新实例还没配代理，源表单上的开关应当是禁用状态
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/sources/new" > "$WORK/srcform.html"
+tr -d '\n' < "$WORK/srcform.html" | grep -o '<input[^>]*name="use_proxy"[^>]*>' > "$WORK/tag.txt" || true
+[ -s "$WORK/tag.txt" ] || fail "源表单里没有代理开关"
+grep -q disabled "$WORK/tag.txt" || fail "没配代理时源表单的代理开关应当是禁用的"
+pass "设置页有网络代理面板，源表单的代理开关在未配置时禁用"
+
+echo
 echo "== 建源与规则 =="
 post_form \
   --data-urlencode "name=GitHub 接收" \

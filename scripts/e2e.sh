@@ -15,11 +15,13 @@ WORK="$(mktemp -d)"
 
 APP_PORT="${E2E_APP_PORT:-18080}"
 MOCK_PORT="${E2E_MOCK_PORT:-19090}"
+PROXY_PORT="${E2E_PROXY_PORT:-19091}"
 ADMIN_USER="admin"
 ADMIN_PASS="e2e-password-123"
 BASE="http://127.0.0.1:${APP_PORT}"
 JAR="$WORK/cookies.txt"
 RECEIVED="$WORK/received.txt"
+PROXY_LOG="$WORK/proxy.log"
 
 PIDS=()
 
@@ -348,6 +350,190 @@ assert 'admin_pass_hash' not in json.dumps(d), '导出文件不应包含密码�
 pass "配置导出正常，且不含密码哈希"
 
 echo
+echo "== 代理 =="
+# 真起一个正向代理：只有请求确实落在它上面，才算「走了代理」。
+# 目标地址是明文 http，所以正向代理收到的是绝对地址（POST http://host:port/path）。
+cat > "$WORK/proxy.py" <<'PY'
+import http.server, sys, urllib.request
+
+OUT = sys.argv[2]
+
+class P(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
+    def do_POST(self):
+        with open(OUT, 'a') as f:
+            f.write('PROXY %s\n' % self.path)
+        n = int(self.headers.get('Content-Length') or 0)
+        body = self.rfile.read(n)
+        skip = ('host', 'content-length', 'proxy-connection', 'connection')
+        req = urllib.request.Request(self.path, data=body, method='POST',
+            headers={k: v for k, v in self.headers.items() if k.lower() not in skip})
+        # 空 ProxyHandler：别让环境变量里的代理把这一跳又接走
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(req) as r:
+                data, code = r.read(), r.status
+        except Exception as e:
+            data, code = str(e).encode(), 502
+        self.send_response(code)
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *a):
+        pass
+
+srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), P)
+with open(sys.argv[3], 'w') as f:
+    f.write('ready')
+srv.serve_forever()
+PY
+
+# 端口先确认是空的：不然探活会被别的进程骗过去（这个坑真踩过一次 ——
+# 一个残留的 mock 占着端口，任何请求都回 200，看起来「代理起来了」）。
+python3 -c "
+import socket, sys
+s = socket.socket()
+try:
+    s.bind(('127.0.0.1', $PROXY_PORT))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+" || fail "端口 $PROXY_PORT 已被占用，换个端口：E2E_PROXY_PORT=19xxx bash scripts/e2e.sh"
+
+python3 "$WORK/proxy.py" "$PROXY_PORT" "$PROXY_LOG" "$WORK/proxy.ready" &
+PIDS+=("$!")
+# 探活看的是「我们自己写的就绪标记」，不是「端口上有响应」。
+wait_for "test -s $WORK/proxy.ready" || fail "正向代理没起来"
+pass "正向代理已启动（端口 $PROXY_PORT）"
+
+# 设置页能配代理，保存后要回填
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/proxy-empty.html"
+grep -q 'name="proxy_type"' "$WORK/proxy-empty.html" || fail "设置页没有代理类型下拉框"
+for t in none http https socks5; do
+  grep -q "value=\"$t\"" "$WORK/proxy-empty.html" || fail "代理类型下拉里缺少 $t"
+done
+post_form \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "proxy_type=http" \
+  --data-urlencode "proxy_addr=127.0.0.1:$PROXY_PORT" \
+  "$BASE/settings"
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/proxy-set.html"
+grep -q 'value="127.0.0.1:'"$PROXY_PORT"'"' "$WORK/proxy-set.html" || fail "设置页没有回填已保存的代理地址"
+pass "设置页能选 HTTP / HTTPS / SOCKS5，保存后回填正常"
+
+# 一个勾了代理的发送源 + 一条规则
+post_form \
+  --data-urlencode "name=代理目标" \
+  --data-urlencode "kind=webhook" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "slug=" \
+  --data-urlencode "auth_mode=none" \
+  --data-urlencode "ip_allow=" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/proxy-sink" \
+  --data-urlencode "http_method=POST" \
+  --data-urlencode "headers={}" \
+  --data-urlencode "use_proxy=1" \
+  "$BASE/sources"
+
+post_form \
+  --data-urlencode "name=走代理转发的规则" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=1" \
+  --data-urlencode "to_source_ids=3" \
+  --data-urlencode "filters=action eq proxy" \
+  --data-urlencode "body_template=" \
+  --data-urlencode "subject_template=" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+curl -fsS -b "$JAR" "$BASE/sources/3/edit" > "$WORK/proxy-form.html"
+tag=$(python3 -c "
+import re
+h = open('$WORK/proxy-form.html').read()
+m = re.search(r'<input[^>]*name=\"use_proxy\"[^>]*>', h)
+print(m.group(0) if m else '')
+")
+[ -n "$tag" ] || fail "源表单里没有代理开关"
+case "$tag" in *checked*) ;; *) fail "勾了代理的源没有回填成选中：$tag" ;; esac
+case "$tag" in *disabled*) fail "已经配了代理，开关不该是禁用的：$tag" ;; esac
+pass "源表单的「通过代理发送」能勾能回填"
+
+# 勾了 → 走代理（代理日志里出现绝对地址），目标也真的收到了
+curl -s -o /dev/null -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"proxy"}' "$BASE/hook/gh-e2e"
+wait_for "grep -q 'PATH /proxy-sink' $RECEIVED" || fail "勾了代理的源没有把请求投出去"
+grep -q "PROXY http://127.0.0.1:$MOCK_PORT/proxy-sink" "$PROXY_LOG" \
+  || fail "请求没有经过代理：$(cat "$PROXY_LOG" 2>/dev/null)"
+pass "勾了「通过代理发送」的源确实走了代理"
+
+# 取消勾选 → 直连（代理日志不再增长，目标照样收到）
+post_form \
+  --data-urlencode "name=代理目标" \
+  --data-urlencode "kind=webhook" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "slug=" \
+  --data-urlencode "auth_mode=none" \
+  --data-urlencode "ip_allow=" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/proxy-sink" \
+  --data-urlencode "http_method=POST" \
+  --data-urlencode "headers={}" \
+  "$BASE/sources/3"
+
+before=$(grep -c PROXY "$PROXY_LOG" || true)
+curl -s -o /dev/null -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"proxy"}' "$BASE/hook/gh-e2e"
+hit=0
+i=0
+while [ "$i" -lt 50 ]; do
+  [ "$(grep -c 'PATH /proxy-sink' "$RECEIVED" || true)" -ge 2 ] && { hit=1; break; }
+  sleep 0.2
+  i=$((i + 1))
+done
+[ "$hit" = "1" ] || fail "取消勾选后直连的投递没有到达目标"
+[ "$(grep -c PROXY "$PROXY_LOG" || true)" = "$before" ] || fail "取消勾选后仍然走了代理"
+pass "取消勾选后改回直连"
+
+# 用途改成「接收」→ 勾选被忽略，连投递都不会发生
+post_form \
+  --data-urlencode "name=代理目标" \
+  --data-urlencode "kind=webhook" \
+  --data-urlencode "usage=in" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "slug=proxy-sink-in" \
+  --data-urlencode "auth_mode=none" \
+  --data-urlencode "ip_allow=" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/proxy-sink" \
+  --data-urlencode "http_method=POST" \
+  --data-urlencode "headers={}" \
+  --data-urlencode "use_proxy=1" \
+  "$BASE/sources/3"
+
+before=$(grep -c PROXY "$PROXY_LOG" || true)
+out=$(curl -s -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"proxy"}' "$BASE/hook/gh-e2e")
+grep -q "accepted 0" <<<"$out" || fail "用途改成接收后不该再投递，实际：$out"
+[ "$(grep -c PROXY "$PROXY_LOG" || true)" = "$before" ] || fail "用途不含发送的源仍然走了代理"
+pass "用途不含发送时忽略代理开关（不投递、也不走代理）"
+
+# 非法代理地址必须被挡下，且不能改掉已存的配置
+curl -s -b "$JAR" -c "$JAR" -o "$WORK/proxy-bad.html" -X POST \
+  --data-urlencode "web_port=$APP_PORT" \
+  --data-urlencode "base_url=$BASE" \
+  --data-urlencode "admin_user=$ADMIN_USER" \
+  --data-urlencode "proxy_type=socks5" \
+  --data-urlencode "proxy_addr=not-an-address" \
+  "$BASE/settings"
+grep -q "代理地址" "$WORK/proxy-bad.html" || fail "非法代理地址没有报错"
+curl -fsS -b "$JAR" "$BASE/settings" > "$WORK/proxy-after-bad.html"
+grep -q 'value="127.0.0.1:'"$PROXY_PORT"'"' "$WORK/proxy-after-bad.html" \
+  || fail "非法提交之后代理配置被改掉了"
+pass "非法代理地址被挡下，原值不变"
+
+echo
 echo "== 失败重试与手动重放 =="
 # 把重试参数调小，好让这段检查在几秒内跑完
 post_form \
@@ -378,7 +564,7 @@ post_form \
   --data-urlencode "name=必然失败的规则" \
   --data-urlencode "enabled=1" \
   --data-urlencode "from_source_ids=1" \
-  --data-urlencode "to_source_ids=3" \
+  --data-urlencode "to_source_ids=4" \
   --data-urlencode "filters=action eq boom" \
   --data-urlencode "body_template=" \
   --data-urlencode "subject_template=" \

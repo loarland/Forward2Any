@@ -123,6 +123,25 @@
     <span>固定附加请求头 <span class="hint">JSON 对象；规则没配请求头模板时用这份</span></span>
     <textarea name="headers" rows="3">{{.Src.Headers}}</textarea>
   </label>
+  {{/* 没配代理时把勾选框禁用掉：勾了也不会生效，不如直接说清楚。
+       用途不含发送时这整块面板本来就是隐藏的，代理自然也就用不上。 */}}
+  <div class="checkbox-line">
+    <input type="checkbox" id="use_proxy" name="use_proxy" value="1"
+      {{if .Src.UseProxy}}checked{{end}} {{if not .Proxy}}disabled{{end}}>
+    <label for="use_proxy">通过代理发送</label>
+  </div>
+  <div class="note">
+    {{if .Proxy}}
+    勾上之后，这个源的 Webhook 投递会走<strong>设置 → 网络代理</strong>里配的
+    <span class="mono">{{.Proxy}}</span>；没勾的源照旧直连。
+    {{else}}
+    还没配置代理：先到<strong>设置 → 网络代理</strong>里填一个，这里才能勾。
+    没配代理时勾了也不生效，投递仍然直连。
+    {{end}}
+    <br>
+    代理只作用于 Webhook 发送，邮件发送（SMTP）不受影响。
+    用途改成不含发送之后，这个勾会被忽略，改回发送时按原样生效。
+  </div>
 </div>
 
 <!-- ---------- 邮件接收 ---------- -->

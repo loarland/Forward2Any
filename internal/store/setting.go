@@ -32,6 +32,8 @@ const (
 	KeyLogRetentionDays    = "log_retention_days"
 	KeyThemeColor          = "theme_color"
 	KeyThemeMode           = "theme_mode"
+	KeyProxyType           = "proxy_type"
+	KeyProxyAddr           = "proxy_addr"
 )
 
 // Settings 是设置页编辑的全部内容。
@@ -47,6 +49,8 @@ type Settings struct {
 	LogRetentionDays    int
 	ThemeColor          string // palettes/ 下的配色名
 	ThemeMode           string // auto / light / dark
+	ProxyType           string // none / http / https / socks5
+	ProxyAddr           string // host:port，可带 用户名:密码@
 
 	// raw 保留数据库原始键值，用于区分「从未设置」与「显式设成默认值」。
 	raw settingsRaw
@@ -63,6 +67,8 @@ func DefaultSettings() *Settings {
 		LogRetentionDays:    30,
 		ThemeColor:          "blue",
 		ThemeMode:           "auto",
+		ProxyType:           "none",
+		ProxyAddr:           "",
 	}
 }
 
@@ -100,6 +106,8 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyLogRetentionDays, strconv.Itoa(exist.LogRetentionDays))
 	setIfMissing(KeyThemeColor, exist.ThemeColor)
 	setIfMissing(KeyThemeMode, exist.ThemeMode)
+	setIfMissing(KeyProxyType, exist.ProxyType)
+	setIfMissing(KeyProxyAddr, exist.ProxyAddr)
 
 	if exist.AdminPassHash == "" {
 		pw := in.AdminPass
@@ -149,8 +157,26 @@ func (s *Store) Settings() (*Settings, error) {
 	d.LogRetentionDays = atoi(get(KeyLogRetentionDays, strconv.Itoa(d.LogRetentionDays)), d.LogRetentionDays)
 	d.ThemeColor = get(KeyThemeColor, d.ThemeColor)
 	d.ThemeMode = get(KeyThemeMode, d.ThemeMode)
+	d.ProxyType = get(KeyProxyType, d.ProxyType)
+	d.ProxyAddr = get(KeyProxyAddr, d.ProxyAddr)
 	d.raw = raw
 	return d, nil
+}
+
+// ProxyURL 把代理设置拼成 http.Transport 认得的形式；没启用代理时返回空串。
+//
+// 三种类型都由标准库直接支持（socks5 也支持，账号密码写在地址里即可），
+// 所以这里不需要额外依赖。地址的合法性在设置页保存时校验。
+func (s *Settings) ProxyURL() string {
+	switch s.ProxyType {
+	case "http", "https", "socks5":
+	default:
+		return ""
+	}
+	if s.ProxyAddr == "" {
+		return ""
+	}
+	return s.ProxyType + "://" + s.ProxyAddr
 }
 
 // raw 保存数据库里的原始键值，用于区分「未设置」与「设成了默认值」。
@@ -210,6 +236,8 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyLogRetentionDays:    strconv.Itoa(v.LogRetentionDays),
 		KeyThemeColor:          v.ThemeColor,
 		KeyThemeMode:           v.ThemeMode,
+		KeyProxyType:           v.ProxyType,
+		KeyProxyAddr:           v.ProxyAddr,
 	})
 }
 

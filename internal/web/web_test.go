@@ -731,3 +731,231 @@ func TestRefreshThemeFallsBackOnGarbage(t *testing.T) {
 		t.Error("非法配色被拼进了页面")
 	}
 }
+
+// 代理设置：类型和地址要么都对，要么都空着。
+func TestValidateProxy(t *testing.T) {
+	ok := []struct{ kind, addr string }{
+		{"", ""},
+		{"none", ""},
+		{"none", "127.0.0.1:7890"}, // 选了「不使用」，地址留着当备忘也不影响
+		{"http", "127.0.0.1:7890"},
+		{"https", "proxy.corp.example:3128"},
+		{"socks5", "10.0.0.1:1080"},
+		{"socks5", "user:pw@127.0.0.1:1080"},
+		{"http", "[::1]:7890"},
+	}
+	for _, c := range ok {
+		if err := validateProxy(c.kind, c.addr); err != nil {
+			t.Errorf("%q/%q 应当合法，得到 %v", c.kind, c.addr, err)
+		}
+	}
+
+	bad := []struct{ kind, addr string }{
+		{"gopher", "127.0.0.1:1"},
+		{"socks4", "127.0.0.1:1080"},
+		{"http", ""},                   // 选了类型却没填地址
+		{"http", "127.0.0.1"},          // 缺端口
+		{"http", "http://127.0.0.1:1"}, // 类型在上面选，地址不带前缀
+		{"http", ":7890"},              // 没有主机名
+		{"http", "127.0.0.1:0"},
+		{"http", "127.0.0.1:99999"},
+		{"http", "127.0.0.1:abc"},
+	}
+	for _, c := range bad {
+		if err := validateProxy(c.kind, c.addr); err == nil {
+			t.Errorf("%q/%q 应当被判为非法", c.kind, c.addr)
+		}
+	}
+}
+
+// 设置页可能只提交一部分字段（比如只改配色）。这种情况下代理配置必须原样保留，
+// 否则改一次外观就会把代理抹掉。非法值则必须被挡下、原值不变。
+func TestSettingsSaveKeepsProxyOnPartialPost(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+	s.port = 16000
+
+	if err := st.SetSettings(map[string]string{
+		store.KeyProxyType: "socks5", store.KeyProxyAddr: "127.0.0.1:1080",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	save := func(extra map[string]string) *httptest.ResponseRecorder {
+		form := url.Values{
+			"web_port": {"16000"}, "base_url": {"http://localhost:16000"},
+			"admin_user": {"admin"}, "retry_max": {"5"}, "retry_backoff_seconds": {"10"},
+			"payload_max_bytes": {"65536"}, "log_retention_days": {"30"},
+		}
+		for k, v := range extra {
+			form.Set(k, v)
+		}
+		req := httptest.NewRequest("POST", "/settings", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		s.handleSettingsSave(rec, req)
+		return rec
+	}
+
+	// 只改外观：代理不动
+	save(map[string]string{"theme_color": "jade", "theme_mode": "dark"})
+	after, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ProxyType != "socks5" || after.ProxyAddr != "127.0.0.1:1080" {
+		t.Errorf("只改外观不该动到代理，实际 %q/%q", after.ProxyType, after.ProxyAddr)
+	}
+
+	// 非法地址：报错，且原值不变
+	rec := save(map[string]string{"proxy_type": "http", "proxy_addr": "http://127.0.0.1:7890"})
+	if !strings.Contains(rec.Body.String(), "代理地址") {
+		t.Errorf("非法代理地址应当给出提示，实际：%s", rec.Body.String()[:min(200, rec.Body.Len())])
+	}
+	after, err = st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ProxyType != "socks5" || after.ProxyAddr != "127.0.0.1:1080" {
+		t.Errorf("非法提交不该改掉已存的代理，实际 %q/%q", after.ProxyType, after.ProxyAddr)
+	}
+
+	// 合法提交：写进去
+	save(map[string]string{"proxy_type": "http", "proxy_addr": "127.0.0.1:7890"})
+	after, err = st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ProxyURL() != "http://127.0.0.1:7890" {
+		t.Errorf("代理没存住：%q", after.ProxyURL())
+	}
+
+	// 切回「不使用代理」：地址可以留空
+	save(map[string]string{"proxy_type": "none", "proxy_addr": ""})
+	after, err = st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ProxyURL() != "" {
+		t.Errorf("选了不使用代理之后不该还拼得出地址：%q", after.ProxyURL())
+	}
+}
+
+// 「走代理发送」只在 webhook + 用途含发送时才认；其它情况沿用原值。
+func TestSourceFormUseProxyRules(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+
+	parse := func(base *store.Source, form url.Values) *store.Source {
+		req := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		src, err := s.sourceFromForm(req, base)
+		if err != nil {
+			t.Fatalf("表单解析失败: %v", err)
+		}
+		return src
+	}
+	webhookForm := func(usage string, useProxy bool) url.Values {
+		v := url.Values{
+			"name": {"源"}, "kind": {"webhook"}, "usage": {usage}, "enabled": {"1"},
+			"headers": {"{}"}, "http_method": {"POST"}, "url": {"http://example.com/x"},
+		}
+		if useProxy {
+			v.Set("use_proxy", "1")
+		}
+		return v
+	}
+
+	// 发送源勾上 → 存下来
+	got := parse(&store.Source{}, webhookForm("out", true))
+	if !got.UseProxy {
+		t.Error("发送源勾了代理却没存下来")
+	}
+	// 发送源取消勾选 → 清掉
+	got = parse(&store.Source{UseProxy: true}, webhookForm("both", false))
+	if got.UseProxy {
+		t.Error("取消勾选后应当清掉代理开关")
+	}
+	// 用途是接收 → 表单里的 use_proxy 被忽略
+	got = parse(&store.Source{}, webhookForm("in", true))
+	if got.UseProxy {
+		t.Error("用途不含发送时不该记下代理开关")
+	}
+	// 用途从发送改成接收 → 原来的勾要留着（改回发送时还照旧）
+	got = parse(&store.Source{UseProxy: true}, webhookForm("in", false))
+	if !got.UseProxy {
+		t.Error("改成接收用途不该把原来的代理开关抹掉")
+	}
+	// 邮件源压根没有这个字段（SMTP 不走代理）→ 沿用原值
+	mailForm := url.Values{
+		"name": {"邮件"}, "kind": {"email"}, "usage": {"out"}, "enabled": {"1"},
+		"headers": {"{}"}, "smtp_host": {"smtp.example.com"}, "smtp_port": {"587"},
+		"smtp_tls": {"starttls"}, "mail_from": {"a@example.com"}, "mail_to": {"b@example.com"},
+		"use_proxy": {"1"},
+	}
+	if got := parse(&store.Source{}, mailForm); got.UseProxy {
+		t.Error("邮件源不该记下代理开关")
+	}
+}
+
+// 源表单上的代理开关：没配代理时禁用（勾了也不生效），配了就显示当前代理地址。
+func TestSourceFormRendersProxyToggle(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testServer()
+	s.store = st
+
+	tagFor := func(useProxy bool) (string, string) {
+		rec := httptest.NewRecorder()
+		src := &store.Source{Kind: "webhook", Usage: "out", Headers: "{}", UseProxy: useProxy}
+		s.renderSourceForm(rec, httptest.NewRequest("GET", "/sources/new", nil), src, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("源表单渲染失败：%d %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		tag := regexp.MustCompile(`<input[^>]*name="use_proxy"[^>]*>`).FindString(body)
+		if tag == "" {
+			t.Fatal("源表单里没有代理开关")
+		}
+		return tag, body
+	}
+
+	// 还没配代理：开关禁用，并说清楚勾了也直连
+	tag, body := tagFor(false)
+	if !strings.Contains(tag, "disabled") {
+		t.Errorf("没配代理时开关应当禁用，实际：%s", tag)
+	}
+	if !strings.Contains(body, "还没配置代理") {
+		t.Error("没配代理时应当给出提示")
+	}
+
+	// 配上代理：开关可用，并把地址显示出来
+	if err := st.SetSettings(map[string]string{
+		store.KeyProxyType: "socks5", store.KeyProxyAddr: "127.0.0.1:1080",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tag, body = tagFor(true)
+	if strings.Contains(tag, "disabled") {
+		t.Errorf("配了代理之后开关不该再禁用，实际：%s", tag)
+	}
+	if !strings.Contains(tag, "checked") {
+		t.Errorf("勾了代理的源应当回填成选中，实际：%s", tag)
+	}
+	if !strings.Contains(body, "socks5://127.0.0.1:1080") {
+		t.Error("表单里应当显示当前生效的代理地址")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type Engine struct {
 
 	mu      sync.Mutex
 	running bool
+	proxied map[string]*http.Client // 按代理地址缓存的客户端，受 mu 保护
 }
 
 func New(st *store.Store, log *slog.Logger) *Engine {
@@ -42,6 +44,37 @@ func New(st *store.Store, log *slog.Logger) *Engine {
 		notify: make(chan struct{}, 1),
 		stop:   make(chan struct{}),
 	}
+}
+
+// clientFor 返回这次投递要用的 HTTP 客户端：配了代理就走代理，没配就直连。
+//
+// ponytail: 按代理地址缓存客户端，不设上限 —— 地址只来自设置页那一个输入框，
+// 条目数实际是常数；真要按地址无限增长，再加淘汰。
+func (e *Engine) clientFor(proxyURL string) (*http.Client, error) {
+	if proxyURL == "" {
+		return e.client, nil
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c, ok := e.proxied[proxyURL]; ok {
+		return c, nil
+	}
+
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("代理地址 %q 不合法: %w", proxyURL, err)
+	}
+	// 从默认传输克隆，免得只因为加了代理就丢掉超时、HTTP/2 这些默认值。
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = http.ProxyURL(u)
+	c := &http.Client{Timeout: clientTimeout, Transport: tr}
+
+	if e.proxied == nil {
+		e.proxied = make(map[string]*http.Client)
+	}
+	e.proxied[proxyURL] = c
+	return c, nil
 }
 
 func (e *Engine) Start() {
@@ -300,7 +333,18 @@ func (e *Engine) attempt(d *store.Delivery) {
 	)
 	switch out.Kind {
 	case "webhook":
-		code, respBody, sendErr = e.sendWebhook(d, out)
+		// 只有「用途包含发送」的源才认这个勾选：用途改成纯接收之后，
+		// 即使库里还留着这个标记，也不该再走代理。
+		proxyURL := ""
+		if out.UseProxy && out.CanSend() {
+			proxyURL = settings.ProxyURL()
+		}
+		client, cerr := e.clientFor(proxyURL)
+		if cerr != nil {
+			sendErr = cerr
+			break
+		}
+		code, respBody, sendErr = e.sendWebhook(d, out, client)
 	case "email":
 		sendErr = e.sendMail(d, out)
 	default:

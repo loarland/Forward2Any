@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +70,15 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := formValue(r, "theme_mode"); validThemeMode(v) {
 		next.ThemeMode = v
+	}
+	// 代理这一组只在表单确实提交了它们时才动：别的只提交部分字段的请求
+	// （比如只改配色）不该把代理配置抹掉。
+	if _, ok := r.PostForm["proxy_type"]; ok {
+		next.ProxyType = formValue(r, "proxy_type")
+		if next.ProxyType == "" {
+			next.ProxyType = "none"
+		}
+		next.ProxyAddr = formValue(r, "proxy_addr")
 	}
 
 	if err := validateSettings(&next); err != nil {
@@ -160,6 +171,41 @@ func validateSettings(v *store.Settings) error {
 	}
 	if v.LogRetentionDays < 1 {
 		return errors.New("日志保留天数至少 1 天")
+	}
+	return validateProxy(v.ProxyType, v.ProxyAddr)
+}
+
+// validateProxy 校验代理设置。类型和地址要么都空着（不使用代理），要么都对。
+func validateProxy(kind, addr string) error {
+	switch kind {
+	case "", "none":
+		return nil
+	case "http", "https", "socks5":
+	default:
+		return errors.New("代理类型只能是 HTTP / HTTPS / SOCKS5")
+	}
+	if addr == "" {
+		return errors.New("选了代理类型就得填代理地址，例如 127.0.0.1:7890")
+	}
+	if strings.Contains(addr, "://") {
+		return errors.New("代理地址不用带 http:// 前缀，类型在上面选，地址只填 主机:端口")
+	}
+	// 允许把账号密码写在地址里，标准库对三种代理都支持。
+	// 先摘掉 userinfo 再拆主机端口，否则 SplitHostPort 会被多出来的冒号绊住。
+	hostport := addr
+	if i := strings.LastIndex(hostport, "@"); i >= 0 {
+		hostport = hostport[i+1:]
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return fmt.Errorf("代理地址应形如 127.0.0.1:7890（%v）", err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return errors.New("代理地址里没有主机名")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("代理端口 %q 不合法", port)
 	}
 	return nil
 }

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -485,5 +487,148 @@ func TestBootstrapSeedsTheme(t *testing.T) {
 	}
 	if _, ok := s.raw[KeyThemeMode]; !ok {
 		t.Error("Bootstrap 应当把 theme_mode 种进库")
+	}
+}
+
+// 代理是 KV 表里的两个新键，同样不需要迁移；ProxyURL 是引擎唯一读它的入口。
+func TestProxySettingsRoundTrip(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ProxyType != "none" || s.ProxyAddr != "" {
+		t.Errorf("默认应当是不使用代理，实际 %q/%q", s.ProxyType, s.ProxyAddr)
+	}
+	if s.ProxyURL() != "" {
+		t.Errorf("没启用代理时不该给出代理地址，实际 %q", s.ProxyURL())
+	}
+
+	s.ProxyType, s.ProxyAddr = "socks5", "user:pw@127.0.0.1:1080"
+	if err := st.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := again.ProxyURL(); got != "socks5://user:pw@127.0.0.1:1080" {
+		t.Errorf("代理没存住或拼错：%q", got)
+	}
+	// 只改代理不该动到别的设置。
+	if again.WebPort != s.WebPort || again.ThemeColor != s.ThemeColor {
+		t.Error("保存代理时改动了其它设置")
+	}
+
+	// 类型不认识（可能是人手改库改出来的）时当作没配，不能拼出奇怪的地址。
+	again.ProxyType = "gopher"
+	if got := again.ProxyURL(); got != "" {
+		t.Errorf("未知代理类型应当当作没配，实际 %q", got)
+	}
+	// 类型对但没填地址，同样当作没配。
+	again.ProxyType, again.ProxyAddr = "http", ""
+	if got := again.ProxyURL(); got != "" {
+		t.Errorf("没填地址时不该给出代理地址，实际 %q", got)
+	}
+}
+
+// 源上的「走代理发送」要能存能读 —— 它是 v2 迁移新加的列。
+func TestSourceUseProxyRoundTrip(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src := &Source{
+		Name: "走代理", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://example.com/x", HTTPMethod: "POST", Headers: "{}", UseProxy: true,
+	}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.UseProxy {
+		t.Error("use_proxy 没有存住")
+	}
+
+	got.UseProxy = false
+	if err := st.SaveSource(got); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.UseProxy {
+		t.Error("取消勾选后 use_proxy 没有更新")
+	}
+}
+
+// 从 v1 升上来的老库：use_proxy 由 v2 的 ALTER 补上，老数据必须原样还在。
+func TestMigrateAddsUseProxyToExistingDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f2a.db")
+
+	// 手工造一个停在 user_version=1 的库：只跑第一版迁移，再塞一行老数据。
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range migrations[0] {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	// v1 的 sources 还没有 use_proxy 列
+	if _, err := db.Exec(`INSERT INTO sources (name, kind, usage, enabled, slug, url, http_method, headers)
+		VALUES ('老源', 'webhook', 'out', 1, '', 'http://example.com/old', 'POST', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("升级 v1 老库失败: %v", err)
+	}
+	defer st.Close()
+
+	// 读一遍就会扫 use_proxy 列：列没补上这里直接报错。
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatalf("升级后读不出老库的源: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "老源" {
+		t.Fatalf("迁移把老数据弄丢了: %+v", list)
+	}
+	if list[0].UseProxy {
+		t.Error("老数据的 use_proxy 应当是 0")
+	}
+	if list[0].URL != "http://example.com/old" {
+		t.Errorf("老字段被改动了: %q", list[0].URL)
+	}
+
+	// 补上的列要真能写
+	list[0].UseProxy = true
+	if err := st.SaveSource(list[0]); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.UseProxy {
+		t.Error("升级后的库写不进 use_proxy")
 	}
 }

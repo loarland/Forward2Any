@@ -11,8 +11,9 @@ import (
 	"github.com/loarland/Forward2Any/internal/store"
 )
 
-// sendWebhook 发出一次 HTTP 投递。
-func (e *Engine) sendWebhook(d *store.Delivery, out *store.Source) (int, string, error) {
+// sendWebhook 用给定的客户端发出一次 HTTP 投递。
+// client 由调用方决定：直连的那个，还是绑了代理的那个。
+func (e *Engine) sendWebhook(d *store.Delivery, out *store.Source, client *http.Client) (int, string, error) {
 	if strings.TrimSpace(out.URL) == "" {
 		return 0, "", errors.New("目标地址为空")
 	}
@@ -48,7 +49,7 @@ func (e *Engine) sendWebhook(d *store.Delivery, out *store.Source) (int, string,
 		req.Header.Set("X-F2A-Hops", d.HopChain)
 	}
 
-	resp, err := e.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", err
 	}

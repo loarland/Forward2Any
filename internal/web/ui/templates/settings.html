@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>设置</h1>
-    <div class="sub">监听端口、管理员账号、外观、重试策略与配置导入导出</div>
+    <div class="sub">监听端口、管理员账号、网络代理、外观、重试策略与配置导入导出</div>
   </div>
 </div>
 
@@ -26,6 +26,36 @@
     改端口会在本进程内立即重新绑定监听，不用重启。
     但如果跑在 Docker 里，还得同步改 docker-compose.yml 的端口映射，否则容器外访问不到；
     这时候建议把「回调基址」也一并改成外部实际访问的地址。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>网络代理</h2>
+  <div class="grid2">
+    <label>
+      <span>代理类型</span>
+      <select name="proxy_type">
+        <option value="none" {{if eq .S.ProxyType "none"}}selected{{end}}>不使用代理</option>
+        <option value="http" {{if eq .S.ProxyType "http"}}selected{{end}}>HTTP</option>
+        <option value="https" {{if eq .S.ProxyType "https"}}selected{{end}}>HTTPS</option>
+        <option value="socks5" {{if eq .S.ProxyType "socks5"}}selected{{end}}>SOCKS5</option>
+      </select>
+    </label>
+    <label>
+      <span>代理地址 <span class="hint">主机:端口</span></span>
+      <input type="text" name="proxy_addr" value="{{.S.ProxyAddr}}" placeholder="127.0.0.1:7890">
+    </label>
+  </div>
+  <div class="note">
+    这里配好的代理<strong>不会自动生效</strong>：还要到「源」里勾上<strong>通过代理发送</strong>，
+    那个源的 Webhook 投递才会走它。没勾的源、以及邮件发送（SMTP），一律直连。
+    <br>
+    需要认证就把账号密码写进地址：<span class="mono">用户名:密码@127.0.0.1:7890</span>，
+    HTTP / HTTPS / SOCKS5 三种都支持。
+    <br>
+    HTTPS 指的是<strong>到代理这一段</strong>用 TLS 连接，不是「用它访问 https 站点」—— 三种类型都能访问 https 目标。
+    <br>
+    代理连不上时投递会直接失败并记进日志，<strong>不会偷偷改回直连</strong>。
   </div>
 </div>
 
