@@ -1,16 +1,14 @@
 services:
   forward2any:
-    # 现成镜像，amd64 / arm64 都有。改了代码要本地验证就把这行换成：build: .
+    # 改了代码要本地验证就把这行换成：build: .
     image: ghcr.io/loarland/forward2any:latest
     container_name: forward2any
     restart: unless-stopped
 
-    # 后台界面和 webhook 接收端点共用这一个端口，靠路径区分：
-    #   管理后台      http://<host>:<宿主端口>/
-    #   webhook 接收  http://<host>:<宿主端口>/hook/<路径标识>
-    # 这样新增接收源不用改端口，也就不用动 docker 配置。
-    # 宿主端口在 .env 里改（F2A_HOST_PORT），容器内固定 16000；
-    # F2A_BASE_URL 没显式设过的话会跟着宿主端口走。
+    # 后台和 webhook 接收端点共用这一个端口，容器内固定 16000：
+    #   http://<host>:<宿主端口>/                  后台
+    #   http://<host>:<宿主端口>/hook/<路径标识>    webhook 接收
+    # 宿主端口在 .env 里改（F2A_HOST_PORT）；F2A_BASE_URL 没设过的话会跟着它走。
     ports:
       - "${F2A_HOST_PORT:-16000}:16000"
 
@@ -18,8 +16,8 @@ services:
     volumes:
       - "${F2A_DATA_DIR:-f2a-data}:/data"
 
-    # 以 root 跑（镜像默认是 nonroot 65532）：宿主机目录不用先 chown，挂哪都写得进去。
-    # 想跑非 root 就在 .env 里设 F2A_UID / F2A_GID，并把数据目录属主改成一致。
+    # 容器内进程的 uid / gid，默认 0（root），宿主机目录不用先 chown。
+    # 要跑非 root 就在 .env 里设成 `id -u` / `id -g`，数据目录的属主要和它一致。
     user: "${F2A_UID:-0}:${F2A_GID:-0}"
 
     environment:

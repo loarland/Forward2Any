@@ -41,7 +41,7 @@ TimeoutStopSec=30
 Restart=always
 RestartSec=3
 
-# 加固。它是个收外部请求的服务，跑在专用非 root 用户下，除了自己的数据目录不需要写任何地方。
+# 加固。服务只写自己的数据目录，要加别的路径就写进 ReadWritePaths。
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
