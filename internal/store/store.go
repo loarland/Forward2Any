@@ -126,6 +126,13 @@ var migrations = [][]string{
 		`ALTER TABLE sources ADD COLUMN channel_secret TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sources ADD COLUMN channel_target TEXT NOT NULL DEFAULT ''`,
 	},
+	// v5：接收源上的默认模板。
+	// 规则里的报文体 / 邮件主题模板留空时用源上的这两份，省得每条规则各写一遍；
+	// 规则填了仍然以规则为准。
+	{
+		`ALTER TABLE sources ADD COLUMN default_body_template TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sources ADD COLUMN default_subject_template TEXT NOT NULL DEFAULT ''`,
+	},
 }
 
 // DBPath 是数据目录里那个库文件的路径。

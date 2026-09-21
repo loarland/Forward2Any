@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/loarland/Forward2Any/internal/engine"
 	"github.com/loarland/Forward2Any/internal/store"
 )
 
@@ -239,6 +240,9 @@ func (s *Server) sourceFromForm(r *http.Request, base *store.Source) (*store.Sou
 	v.ChannelSecret = formValue(r, "channel_secret")
 	v.ChannelTarget = formValue(r, "channel_target")
 
+	v.DefaultBodyTemplate = formValue(r, "default_body_template")
+	v.DefaultSubjectTemplate = formValue(r, "default_subject_template")
+
 	v.SMTPHost = formValue(r, "smtp_host")
 	v.SMTPPort = formInt(r, "smtp_port", 587)
 	v.SMTPUser = formValue(r, "smtp_user")
@@ -303,6 +307,16 @@ func validateSourceShape(v *store.Source) error {
 		return errors.New(`附加请求头必须是 JSON 对象，例如 {"X-Token":"abc"}`)
 	}
 	if err := validateIPAllow(v.IPAllow); err != nil {
+		return err
+	}
+
+	// 默认模板和规则里的模板一样，只校验语法，不拿假 payload 去执行。
+	// 用途不含接收时这两份用不上（表单上也不显示），但值留着 —— 和「走代理发送」那个勾一个道理，
+	// 改回接收时不该发现配置被悄悄清掉了。
+	if err := engine.ValidateTemplate("默认报文体", v.DefaultBodyTemplate); err != nil {
+		return err
+	}
+	if err := engine.ValidateTemplate("默认主题", v.DefaultSubjectTemplate); err != nil {
 		return err
 	}
 

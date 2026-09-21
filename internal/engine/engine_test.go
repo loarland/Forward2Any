@@ -697,3 +697,162 @@ func TestProxyUsedOnlyByOptedInSendingSources(t *testing.T) {
 		t.Errorf("代理失败时不该偷偷直连，目标收到 %d 次请求", got)
 	}
 }
+
+// 源上的默认模板：规则留空时继承，规则填了以规则为准。
+func TestSubmitUsesSourceDefaultTemplates(t *testing.T) {
+	cases := []struct {
+		name        string
+		bodyTmpl    string // 规则上的
+		subjectTmpl string
+		wantBody    string
+		wantSubject string
+	}{
+		{"规则留空 → 用源上的默认", "", "", "磁盘 91%", "✅ 测试通知"},
+		{"规则填了 → 以规则为准", "规则正文", "规则标题", "规则正文", "规则标题"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := store.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+
+			out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+				URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+			in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+				Slug: "def1", HTTPMethod: "POST", Headers: "{}",
+				DefaultBodyTemplate:    "{{.Payload.content}}",
+				DefaultSubjectTemplate: "{{.Payload.title}}"}
+			for _, s := range []*store.Source{out, in} {
+				if err := st.SaveSource(s); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := st.SaveRule(&store.Rule{
+				Name: "转发", Enabled: true,
+				FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID},
+				BodyTemplate: tc.bodyTmpl, SubjectTemplate: tc.subjectTmpl, HeadersTemplate: "{}",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			n, err := eng.Submit(&Inbound{
+				Source:  in,
+				Payload: []byte(`{"title":"✅ 测试通知","content":"磁盘 91%"}`),
+				Parsed:  map[string]any{"title": "✅ 测试通知", "content": "磁盘 91%"},
+				TraceID: "t-def",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != 1 {
+				t.Fatalf("应当入队 1 条，实际 %d 条", n)
+			}
+
+			list, err := st.ListDeliveries(store.DeliveryFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list) != 1 {
+				t.Fatalf("应当只有 1 条投递记录，实际 %d 条", len(list))
+			}
+			if list[0].Rendered != tc.wantBody {
+				t.Errorf("正文应为 %q，实际 %q", tc.wantBody, list[0].Rendered)
+			}
+			if list[0].Subject != tc.wantSubject {
+				t.Errorf("主题应为 %q，实际 %q", tc.wantSubject, list[0].Subject)
+			}
+			// 源上没配、规则也没填时，模板为空 → 原样透传，行为不能变
+			if tc.bodyTmpl == "" && list[0].Payload != `{"title":"✅ 测试通知","content":"磁盘 91%"}` {
+				t.Errorf("原始报文应当原样留着，实际 %q", list[0].Payload)
+			}
+		})
+	}
+}
+
+// 规则和源上都没配模板时，报文仍然原样透传（老行为不能变）。
+func TestSubmitPassthroughWithoutAnyTemplate(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "def2", HTTPMethod: "POST", Headers: "{}"}
+	for _, s := range []*store.Source{out, in} {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "透传", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID}, HeadersTemplate: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	raw := `{"action":"push"}`
+	if _, err := eng.Submit(&Inbound{Source: in, Payload: []byte(raw),
+		Parsed: map[string]any{"action": "push"}, TraceID: "t-raw"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListDeliveries(store.DeliveryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Rendered != raw {
+		t.Fatalf("两份模板都空时应当原样透传，实际 %+v", list)
+	}
+	if list[0].Subject == "" || !strings.HasPrefix(list[0].Subject, "[入口]") {
+		t.Errorf("主题应当仍是自动生成的 %q 形式，实际 %q", "[入口] …", list[0].Subject)
+	}
+}
+
+// 报文被（源上的默认）模板改写过时，Content-Type 要按 JSON 发。
+func TestSubmitDefaultTemplateSetsJSONContentType(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "def3", HTTPMethod: "POST", Headers: "{}", DefaultBodyTemplate: `{"text":{{.Payload.content | printf "%q"}}}`}
+	for _, s := range []*store.Source{out, in} {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "改写", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID}, HeadersTemplate: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := eng.Submit(&Inbound{Source: in, Payload: []byte(`{"content":"x"}`),
+		Parsed: map[string]any{"content": "x"}, TraceID: "t-ct",
+		ContentType: "text/plain"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListDeliveries(store.DeliveryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应当有 1 条投递记录，实际 %d 条", len(list))
+	}
+	if !strings.Contains(list[0].ReqHeaders, "application/json") {
+		t.Errorf("模板改写过报文时 Content-Type 应为 application/json，实际 %q", list[0].ReqHeaders)
+	}
+}

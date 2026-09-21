@@ -828,3 +828,66 @@ func TestChannelKindsAreSendOnly(t *testing.T) {
 		t.Errorf("类型列表应当是 3 个通用类型 + %d 个渠道，实际 %d 个", len(ChannelKinds), len(AllKinds))
 	}
 }
+
+// 从 v4 升上来的老库：源上的默认模板两列由 v5 的 ALTER 补上，老数据不能动。
+func TestMigrateAddsDefaultTemplateColumnsToExistingDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f2a.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmts := range migrations[:4] {
+		for _, stmt := range stmts {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 4`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sources (name, kind, usage, enabled, url, http_method, headers, channel_secret, channel_target)
+		VALUES ('老钉钉源', 'dingtalk', 'out', 1, 'https://oapi.dingtalk.com/robot/send?access_token=t', 'POST', '{}', 'SEC', '123')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("升级 v4 老库失败: %v", err)
+	}
+	defer st.Close()
+
+	list, err := st.ListSources()
+	if err != nil {
+		t.Fatalf("升级后读不出老库的源: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "老钉钉源" {
+		t.Fatalf("迁移把老数据弄丢了: %+v", list)
+	}
+	if list[0].DefaultBodyTemplate != "" || list[0].DefaultSubjectTemplate != "" {
+		t.Errorf("老数据的默认模板应当是空的: %+v", list[0])
+	}
+	if list[0].ChannelSecret != "SEC" || list[0].ChannelTarget != "123" {
+		t.Errorf("v4 的字段被改动了: %+v", list[0])
+	}
+
+	// 补上的列要真能写
+	list[0].Kind = "webhook"
+	list[0].DefaultBodyTemplate = `{{.Payload.content}}`
+	list[0].DefaultSubjectTemplate = `{{.Payload.title}}`
+	if err := st.SaveSource(list[0]); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetSource(list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.DefaultBodyTemplate != `{{.Payload.content}}` || again.DefaultSubjectTemplate != `{{.Payload.title}}` {
+		t.Errorf("升级后的库写不进默认模板字段: %+v", again)
+	}
+}

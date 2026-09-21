@@ -1186,6 +1186,80 @@ dl_detail | grep -q "被拒绝" || fail "投递记录里应当写清楚是被渠
 pass "渠道的业务错误码被认出来（HTTP 200 也判失败），记录里能看到对方的原因"
 
 echo
+echo "== 源级默认模板 =="
+
+# 接收源上配一次默认正文 / 默认标题，规则里留空就继承它。
+post_form \
+  --data-urlencode "name=默认模板入口" \
+  --data-urlencode "kind=webhook" \
+  --data-urlencode "usage=in" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "slug=def-e2e" \
+  --data-urlencode "auth_mode=none" \
+  --data-urlencode "ip_allow=" \
+  --data-urlencode "headers={}" \
+  --data-urlencode "http_method=POST" \
+  --data-urlencode "default_body_template={{.Payload.content}}" \
+  --data-urlencode "default_subject_template={{.Payload.title}}" \
+  "$BASE/sources"
+
+post_form \
+  --data-urlencode "name=默认模板目标" \
+  --data-urlencode "kind=webhook" \
+  --data-urlencode "usage=out" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "slug=" \
+  --data-urlencode "auth_mode=none" \
+  --data-urlencode "ip_allow=" \
+  --data-urlencode "url=http://127.0.0.1:$MOCK_PORT/sink-def" \
+  --data-urlencode "http_method=POST" \
+  --data-urlencode "headers={}" \
+  "$BASE/sources"
+
+DEF_IN="$(source_id 默认模板入口)"
+DEF_OUT="$(source_id 默认模板目标)"
+
+# 规则上两份模板都留空 → 用源上的默认模板
+post_form \
+  --data-urlencode "name=默认模板规则" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=$DEF_IN" \
+  --data-urlencode "to_source_ids=$DEF_OUT" \
+  --data-urlencode "filters=kind eq default" \
+  --data-urlencode "body_template=" \
+  --data-urlencode "subject_template=" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+# 规则上自己填了 → 以规则为准
+post_form \
+  --data-urlencode "name=规则模板优先" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "from_source_ids=$DEF_IN" \
+  --data-urlencode "to_source_ids=$DEF_OUT" \
+  --data-urlencode "filters=kind eq rule" \
+  --data-urlencode "body_template=规则优先：{{.Payload.title}}" \
+  --data-urlencode "subject_template=来自规则" \
+  --data-urlencode "headers_template={}" \
+  "$BASE/rules"
+
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+  -d '{"kind":"default","title":"✅ 测试通知","content":"磁盘 91%"}' "$BASE/hook/def-e2e"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+  -d '{"kind":"rule","title":"✅ 测试通知","content":"磁盘 91%"}' "$BASE/hook/def-e2e"
+
+wait_for "grep -q '^BODY 规则优先：✅ 测试通知$' $RECEIVED" || fail "规则上的模板应当优先于源上的默认模板：$(cat "$RECEIVED")"
+grep -q '^BODY 磁盘 91%$' "$RECEIVED" || fail "规则留空时应当用源上的默认正文模板渲染（收到的是原始 JSON？）：$(cat "$RECEIVED")"
+pass "源级默认模板生效，且规则上的模板优先"
+
+# 默认主题模板同样生效：投递记录里的主题应该是 payload 的 title，而不是自动生成的 [源名] 开头
+DEF_DL="$(curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=默认模板规则" "$BASE/deliveries" | grep -o '/deliveries/[0-9]*' | head -1)"
+[ -n "$DEF_DL" ] || fail "找不到默认模板规则那条投递记录"
+curl -fsS -b "$JAR" "$BASE$DEF_DL" > "$WORK/def-detail.html"
+grep -q '✅ 测试通知' "$WORK/def-detail.html" || fail "默认主题模板没有生效（记录里看不到 payload 的 title）"
+grep -q '\[默认模板入口\]' "$WORK/def-detail.html" && fail "主题还是自动生成的 [源名] 形式，默认主题模板没生效"
+pass "默认主题模板生效（主题就是 payload 里的 title）"
+echo
 echo "== 端口热切换 =="
 NEW_PORT=$((APP_PORT + 1))
 post_form \

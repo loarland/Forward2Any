@@ -60,6 +60,7 @@
     <span class="tag {{if .Src.Enabled}}on{{else}}off{{end}}">{{if .Src.Enabled}}启用{{else}}停用{{end}}</span>
     <span class="tag">{{kindText .Src.Kind}}</span>
     <span class="tag">{{usageText .Src.Usage}}</span>
+    {{if or .Src.DefaultBodyTemplate .Src.DefaultSubjectTemplate}}<span class="tag">默认模板</span>{{end}}
     <span class="spacer"></span>
     <span class="btn-group">
       {{if .Src.CanSend}}
@@ -106,6 +107,12 @@
     {{end}}
     {{if .Src.IPAllow}}
     <div class="meta-line"><span class="meta-key">IP 白名单</span><span class="mono">{{.Src.IPAllow}}</span></div>
+    {{end}}
+    {{if or .Src.DefaultBodyTemplate .Src.DefaultSubjectTemplate}}
+    <div class="meta-line">
+      <span class="meta-key">默认模板</span>
+      <span class="mono">正文：{{if .Src.DefaultBodyTemplate}}{{truncate 60 .Src.DefaultBodyTemplate}}{{else}}—{{end}} · 主题：{{if .Src.DefaultSubjectTemplate}}{{truncate 60 .Src.DefaultSubjectTemplate}}{{else}}—{{end}}</span>
+    </div>
     {{end}}
   </div>
 

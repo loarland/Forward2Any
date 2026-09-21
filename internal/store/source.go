@@ -40,6 +40,10 @@ type Source struct {
 	ChannelSecret string `json:"channel_secret"`
 	ChannelTarget string `json:"channel_target"`
 
+	// 接收源上的默认模板：规则里对应模板留空时用这两份。
+	DefaultBodyTemplate    string `json:"default_body_template"`
+	DefaultSubjectTemplate string `json:"default_subject_template"`
+
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
 	SMTPUser string `json:"smtp_user"`
@@ -138,6 +142,7 @@ const sourceCols = `id, name, kind, usage, enabled, slug, url, http_method, head
 	auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 	tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
 	channel_secret, channel_target,
+	default_body_template, default_subject_template,
 	smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 	imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 	created_at, updated_at`
@@ -149,6 +154,7 @@ func scanSource(sc interface{ Scan(...any) error }) (*Source, error) {
 		&v.AuthMode, &v.AuthHeader, &v.AuthSecret, &v.IPAllow, &v.UseProxy,
 		&v.TgToken, &v.TgChatID, &v.TgThreadID, &v.TgEndpoint,
 		&v.ChannelSecret, &v.ChannelTarget,
+		&v.DefaultBodyTemplate, &v.DefaultSubjectTemplate,
 		&v.SMTPHost, &v.SMTPPort, &v.SMTPUser, &v.SMTPPass, &v.SMTPTLS, &v.MailFrom, &v.MailTo,
 		&v.IMAPHost, &v.IMAPPort, &v.IMAPUser, &v.IMAPPass, &v.IMAPTLS, &v.IMAPFolder, &v.IMAPInterval,
 		&v.CreatedAt, &v.UpdatedAt,
@@ -231,14 +237,16 @@ func saveSource(db execer, v *Source) error {
 			auth_mode, auth_header, auth_secret, ip_allow, use_proxy,
 			tg_token, tg_chat_id, tg_thread_id, tg_endpoint,
 			channel_secret, channel_target,
+			default_body_template, default_subject_template,
 			smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, mail_from, mail_to,
 			imap_host, imap_port, imap_user, imap_pass, imap_tls, imap_folder, imap_interval,
 			created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.Name, v.Kind, v.Usage, v.Enabled, v.Slug, v.URL, v.HTTPMethod, v.Headers,
 			v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 			v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
 			v.ChannelSecret, v.ChannelTarget,
+			v.DefaultBodyTemplate, v.DefaultSubjectTemplate,
 			v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 			v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 			v.CreatedAt, v.UpdatedAt,
@@ -255,6 +263,7 @@ func saveSource(db execer, v *Source) error {
 		auth_mode=?, auth_header=?, auth_secret=?, ip_allow=?, use_proxy=?,
 		tg_token=?, tg_chat_id=?, tg_thread_id=?, tg_endpoint=?,
 		channel_secret=?, channel_target=?,
+		default_body_template=?, default_subject_template=?,
 		smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, mail_from=?, mail_to=?,
 		imap_host=?, imap_port=?, imap_user=?, imap_pass=?, imap_tls=?, imap_folder=?, imap_interval=?,
 		updated_at=?
@@ -263,6 +272,7 @@ func saveSource(db execer, v *Source) error {
 		v.AuthMode, v.AuthHeader, v.AuthSecret, v.IPAllow, v.UseProxy,
 		v.TgToken, v.TgChatID, v.TgThreadID, v.TgEndpoint,
 		v.ChannelSecret, v.ChannelTarget,
+		v.DefaultBodyTemplate, v.DefaultSubjectTemplate,
 		v.SMTPHost, v.SMTPPort, v.SMTPUser, v.SMTPPass, v.SMTPTLS, v.MailFrom, v.MailTo,
 		v.IMAPHost, v.IMAPPort, v.IMAPUser, v.IMAPPass, v.IMAPTLS, v.IMAPFolder, v.IMAPInterval,
 		v.UpdatedAt, v.ID,

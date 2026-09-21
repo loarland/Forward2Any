@@ -2064,3 +2064,91 @@ func TestSourcesListFilterHasChannelKinds(t *testing.T) {
 		t.Error("渠道源的卡片上应当显示类型名")
 	}
 }
+
+// 接收源上的默认模板：存得下、回填得出来，语法错了保存时就挡下来。
+func TestSourceDefaultTemplatesRoundTrip(t *testing.T) {
+	s := testServer()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = st
+
+	form := url.Values{
+		"name": {"入口"}, "kind": {"webhook"}, "usage": {"in"}, "enabled": {"1"},
+		"slug": {"def-in"}, "auth_mode": {"none"}, "ip_allow": {}, "headers": {"{}"},
+		"http_method":              {"POST"},
+		"default_body_template":    {`{{.Payload.content}}`},
+		"default_subject_template": {`{{.Payload.title}}`},
+	}
+	r := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	src, err := s.sourceFromForm(r, &store.Source{})
+	if err != nil {
+		t.Fatalf("默认模板应当解析成功: %v", err)
+	}
+	if src.DefaultBodyTemplate != `{{.Payload.content}}` || src.DefaultSubjectTemplate != `{{.Payload.title}}` {
+		t.Fatalf("默认模板没存下来: %+v", src)
+	}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.renderSourceForm(rec, httptest.NewRequest("GET", "/sources/1/edit", nil), src, "")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`name="default_body_template"`, `name="default_subject_template"`,
+		`data-when="webhook,email:recv"`,
+		`{{.Payload.content}}`, `{{.Payload.title}}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("编辑页里缺少 %s", want)
+		}
+	}
+
+	// 列表页上要能一眼看出这个源配了默认模板
+	rec2 := httptest.NewRecorder()
+	s.handleSourceList(rec2, httptest.NewRequest("GET", "/sources", nil))
+	list := rec2.Body.String()
+	if !strings.Contains(list, "默认模板") {
+		t.Error("源卡片上应当标出配了默认模板")
+	}
+	if !strings.Contains(list, "{{.Payload.content}}") {
+		t.Error("源卡片上应当显示默认模板的内容")
+	}
+}
+
+// 默认模板的语法错误要当场报错（和规则里的模板一样）。
+func TestSourceDefaultTemplateSyntaxRejected(t *testing.T) {
+	s := testServer()
+	form := url.Values{
+		"name": {"入口"}, "kind": {"webhook"}, "usage": {"in"}, "enabled": {"1"},
+		"slug": {"bad-tpl"}, "auth_mode": {"none"}, "headers": {"{}"}, "http_method": {"POST"},
+		"default_body_template":    {`{{.Payload.content`}, // 少一个右括号
+		"default_subject_template": {``},
+	}
+	r := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sourceFromForm(r, &store.Source{}); err == nil {
+		t.Fatal("模板语法错误应当被拒绝")
+	}
+
+	// 数组下标写成 .commits.0 时要给出提示（和规则那边同一套校验）
+	form.Set("default_body_template", `{{.Payload.commits.0.id}}`)
+	r2 := httptest.NewRequest("POST", "/sources", strings.NewReader(form.Encode()))
+	r2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r2.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.sourceFromForm(r2, &store.Source{})
+	if err == nil || !strings.Contains(err.Error(), "index") {
+		t.Fatalf("数组下标写法应当给出 index 提示，实际 %v", err)
+	}
+}

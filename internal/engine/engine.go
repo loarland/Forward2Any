@@ -212,7 +212,12 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 				continue
 			}
 
-			body, err := RenderBody(rule.BodyTemplate, data)
+			// 模板优先级：规则上填了以规则为准；规则留空时用接收源上的默认模板；
+			// 两份都没有就原样透传（RenderBody/RenderSubject 对空模板就是这个意思）。
+			bodyTmpl := pickTemplate(rule.BodyTemplate, in.Source.DefaultBodyTemplate)
+			subjectTmpl := pickTemplate(rule.SubjectTemplate, in.Source.DefaultSubjectTemplate)
+
+			body, err := RenderBody(bodyTmpl, data)
 			if err != nil {
 				e.log.Error("渲染报文模板失败，跳过该目标", "规则", rule.Name, "源", out.Name, "err", err)
 				continue
@@ -222,13 +227,13 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 				e.log.Error("渲染请求头失败，跳过该目标", "规则", rule.Name, "源", out.Name, "err", err)
 				continue
 			}
-			applyDefaultContentType(headers, rule, in)
+			applyDefaultContentType(headers, bodyTmpl, in)
 
 			hdrsJSON, err := json.Marshal(headers)
 			if err != nil {
 				hdrsJSON = []byte("{}")
 			}
-			subject, err := RenderSubject(rule.SubjectTemplate, data)
+			subject, err := RenderSubject(subjectTmpl, data)
 			if err != nil {
 				e.log.Error("渲染主题模板失败，改用默认主题", "规则", rule.Name, "err", err)
 			}
@@ -262,13 +267,22 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 	return created, nil
 }
 
+// pickTemplate 选出生效的模板：规则上填了就用规则的，留空时退回接收源上的默认模板。
+func pickTemplate(ruleTmpl, sourceTmpl string) string {
+	if strings.TrimSpace(ruleTmpl) != "" {
+		return ruleTmpl
+	}
+	return sourceTmpl
+}
+
 // applyDefaultContentType 在用户没指定 Content-Type 时给一个合理的默认值：
 // 报文被模板改写过就按 JSON 发，原样透传则沿用入站的类型。
-func applyDefaultContentType(headers map[string]string, rule *store.Rule, in *Inbound) {
+// bodyTmpl 是 pickTemplate 选出来的那个（规则和源上都没配就是空的）。
+func applyDefaultContentType(headers map[string]string, bodyTmpl string, in *Inbound) {
 	if headers["Content-Type"] != "" {
 		return
 	}
-	if strings.TrimSpace(rule.BodyTemplate) != "" {
+	if strings.TrimSpace(bodyTmpl) != "" {
 		headers["Content-Type"] = "application/json"
 		return
 	}

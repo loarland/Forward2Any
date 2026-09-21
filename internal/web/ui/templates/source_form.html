@@ -107,6 +107,31 @@
   </div>
 </div>
 
+<!-- ---------- 接收默认模板 ---------- -->
+{{/* 接收侧的东西，所以跟「接收」放一起：Webhook 和邮件两种接收源共用这一块。 */}}
+<div class="panel" data-when="webhook,email:recv">
+  <h2>接收默认模板</h2>
+  <label>
+    <span>默认报文体模板 <span class="hint">规则里的「报文体模板」留空时用这份；留空则原样透传入站报文</span></span>
+    <textarea name="default_body_template" rows="4" placeholder="&#123;&#123;.Payload.content&#125;&#125;">{{.Src.DefaultBodyTemplate}}</textarea>
+  </label>
+  <label>
+    <span>默认主题模板 <span class="hint">规则里的「邮件主题模板」留空时用这份；留空则自动生成</span></span>
+    <input type="text" name="default_subject_template" value="{{.Src.DefaultSubjectTemplate}}" placeholder="&#123;&#123;.Payload.title&#125;&#125;">
+  </label>
+  <div class="note">
+    这个源收到消息时，先按这两份模板把报文渲染一遍，再交给规则；<strong>规则里自己填了模板就以规则为准</strong>。<br>
+    变量和规则里的模板完全一样：<span class="mono">&#123;&#123;.Payload.字段&#125;&#125;</span>（解析后的 JSON）、
+    <span class="mono">&#123;&#123;.Raw&#125;&#125;</span>、<span class="mono">&#123;&#123;.Headers&#125;&#125;</span>、
+    <span class="mono">&#123;&#123;.Source.name&#125;&#125;</span>。<br>
+    典型用法：上游推过来的是 <span class="mono">&#123;"title":"…","content":"…"&#125;</span>，
+    这里写 <span class="mono">&#123;&#123;.Payload.title&#125;&#125;</span> /
+    <span class="mono">&#123;&#123;.Payload.content&#125;&#125;</span>，
+    之后每条规则、每个目标（邮件、钉钉、飞书…）拿到的就都是干净的标题和正文。<br>
+    投递日志里的「原始报文（入站）」仍然记录入站原文，方便对照。
+  </div>
+</div>
+
 <!-- ---------- 推送地址（自定义 Webhook 与所有内置渠道共用这一格） ---------- -->
 {{/* 地址只有一格，不给每个渠道各放一个同名的输入框：隐藏起来的面板照样会把值提交上来，
      同一个 name 出现两次时服务端只会读第一个，等于把用户填的地址丢了。 */}}
