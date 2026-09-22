@@ -4,7 +4,7 @@
 
 # Forward2Any
 
-接收 Webhook 与邮件，按规则转发到一个或多个 Webhook / 邮箱 / Telegram。
+接收 Webhook 与邮件，按规则转发到 Webhook、邮箱、Telegram 或八种内置渠道。
 
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![Image](https://img.shields.io/badge/%E9%95%9C%E5%83%8F-%E7%BA%A6%2018MB-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
@@ -18,16 +18,19 @@
 
 ## 项目简介
 
-Forward2Any 是一个自托管的**消息转发中继**：接收 Webhook 或邮件，按配置的规则转发到一个或多个
-Webhook、邮箱或 Telegram。
+Forward2Any 是一个自托管的**消息转发中继**：接收 Webhook 或邮件，按配置的规则转发到一个或多个目标 ——
+自定义 Webhook、邮箱、Telegram，以及钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify /
+OneBot 八种内置渠道。
 
-适用场景：同一个事件需要通知多个位置（CI 结果进群、抄送邮箱、再推送到自建系统）。
+适用场景：同一个事件需要通知多个位置（CI 结果进群、抄送邮箱、再推送到自建系统或手机）。
 只需在 Forward2Any 配置一次接收与分发规则，不必在每个发送方各配一遍 Webhook。
 
 - **单端口**：后台界面与所有 Webhook 接收端点共用同一个端口，通过路径区分。新增接收源不需要开端口，
   也不需要修改 Docker 配置和防火墙。
 - **单二进制**：整个程序（含后台界面）编译成一个静态文件，Docker 镜像约 18MB，
   基于 distroless，前端不引入 npm 构建链。
+- **多目标**：一条规则可同时投递到多个目标，Webhook、邮箱、Telegram 与内置渠道可混用，
+  每个目标单独生成一条投递记录，各自重试。
 - **投递可靠**：投递失败按指数退避自动重试，进程重启后自动接管未完成的投递，失败的可在后台手动重放。
 
 适用于自有 VPS / NAS，为 CI、监控告警、表单、邮件提供统一转发层的场景。
@@ -335,7 +338,7 @@ http://<服务器地址>:16000/
 
 | 概念 | 说明 |
 | --- | --- |
-| **源** | 一个消息出入口。类型是 `Webhook`、`邮件` 或 `Telegram`；用途是「接收」「发送」或「两者」。 |
+| **源** | 一个消息出入口。类型有 `Webhook`、`邮件`、`Telegram`，以及钉钉 / 企业微信 / 飞书 / Bark / Server酱 / WxPusher / Gotify / OneBot 八种内置渠道；用途是「接收」「发送」或「两者」，Telegram 与内置渠道只能发送。 |
 | **规则** | 「哪些源收到的消息 → 转发到哪些源」，外加过滤条件与模板转换。 |
 | **投递** | 一次具体的转发动作。每条规则 × 每个目标源 = 一条投递记录，各自重试。 |
 | **设置** | 回调基址、管理员账号、监听端口、跨站请求校验（开关 + 允许的 Origin / Referer）、网络代理、外观、时区、重试与日志保留、Cloudflare Turnstile 人机校验、配置导入导出。 |
@@ -347,10 +350,13 @@ Webhook ──┐                    ┌──> Webhook A
           ├── 规则 ────────────┤
 邮件    ──┘                    ├──> Webhook B
                                ├──> 邮件
-                               └──> Telegram
+                               ├──> Telegram
+                               └──> 内置渠道（钉钉 / 企业微信 / 飞书 / Bark /
+                                    Server酱 / WxPusher / Gotify / OneBot）
 ```
 
-> Telegram 只能作为目标（发送）使用：Bot API 的更新需要主动拉取或另外配置 Webhook，本项目不实现接收。
+> Telegram 与内置渠道只能作为目标（发送）使用：Bot API 的更新需要主动拉取或另外配置 Webhook，
+> 内置渠道则只有推送接口，两者都不提供接收。
 
 ## 源
 
