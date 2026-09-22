@@ -335,10 +335,10 @@
     }
   })();
 
-  // 5) 列表筛选条（源、规则）。
-  //    这些列表本来就已经整份渲染在页面上了，所以直接在前端过滤，不发请求：
-  //    敲一个字就立刻见效。投递日志不走这里 —— 它的记录会一直涨、还要分页，
-  //    筛选取的是服务端那一套。
+  // 5) 列表筛选条 + 前端翻页（源、规则）。
+  //    这些列表本来就已经整份渲染在页面上了，所以直接在前端过滤、前端翻页，不发请求：
+  //    敲一个字就立刻见效，翻页也不闪一下。投递日志不走这里 —— 它的记录会一直涨，
+  //    筛选取的是服务端那一套，翻页也是服务端渲染的真链接。
   document.querySelectorAll('[data-list-filter]').forEach(function (bar) {
     var rows = Array.prototype.slice.call(document.querySelectorAll('[data-row]'));
     if (!rows.length) {
@@ -350,31 +350,60 @@
     var count = bar.querySelector('[data-lf-count]');
     var empty = document.querySelector('[data-lf-empty]');
 
+    // 翻页条只有「源」「规则」这两页有；投递日志那份由服务端渲染，不带 data-pager-client。
+    var pager = document.querySelector('[data-pager-client]');
+    var sizeSel = pager ? pager.querySelector('[data-pg-size]') : null;
+    var curEl = pager ? pager.querySelector('[data-pg-cur]') : null;
+    var pagesEl = pager ? pager.querySelector('[data-pg-pages]') : null;
+    var jumpEl = pager ? pager.querySelector('[data-pg-input]') : null;
+    var perPage = pager ? (parseInt(pager.getAttribute('data-size'), 10) || rows.length) : rows.length;
+    var matched = rows;
+    var page = 1;
+    var pages = 1;
+
+    // 到头的方向置灰：和投递日志那边一样，只是这里按钮不是链接。
+    function markOff(sel, off) {
+      if (!pager) {
+        return;
+      }
+      var el = pager.querySelector(sel);
+      if (el) {
+        el.classList.toggle('off', off);
+      }
+    }
+
     function apply() {
       var terms = (search ? search.value : '').toLowerCase().split(/\s+/).filter(Boolean);
-      var shown = 0;
+      var filtering = terms.length > 0 || selects.some(function (s) { return s.value !== ''; });
 
-      rows.forEach(function (row) {
+      matched = rows.filter(function (row) {
         // 多个关键词是「都要出现」，跟搜索框的直觉一致。
         var hay = (row.getAttribute('data-search') || '').toLowerCase();
-        var ok = terms.every(function (t) { return hay.indexOf(t) >= 0; });
-
-        if (ok) {
-          ok = selects.every(function (sel) {
-            var want = sel.value;
-            return !want || row.getAttribute('data-' + sel.getAttribute('data-lf')) === want;
-          });
+        if (!terms.every(function (t) { return hay.indexOf(t) >= 0; })) {
+          return false;
         }
-        row.hidden = !ok;
-        if (ok) {
-          shown++;
-        }
+        return selects.every(function (sel) {
+          var want = sel.value;
+          return !want || row.getAttribute('data-' + sel.getAttribute('data-lf')) === want;
+        });
       });
 
-      var filtering = terms.length > 0 || selects.some(function (s) { return s.value !== ''; });
+      // 筛选之后结果集变了，页码要重新夹一次（夹完还是按当前页显示）。
+      pages = Math.max(1, Math.ceil(matched.length / perPage));
+      if (page > pages) {
+        page = pages;
+      }
+      if (page < 1) {
+        page = 1;
+      }
+      var start = (page - 1) * perPage;
+
+      rows.forEach(function (row) { row.hidden = true; });
+      matched.slice(start, start + perPage).forEach(function (row) { row.hidden = false; });
+
       if (count) {
         count.textContent = filtering
-          ? '显示 ' + shown + ' / ' + rows.length + ' 条'
+          ? '显示 ' + matched.length + ' / ' + rows.length + ' 条'
           : '共 ' + rows.length + ' 条';
       }
       if (reset) {
@@ -382,25 +411,113 @@
         reset.classList.toggle('lf-off', !filtering);
       }
       if (empty) {
-        empty.hidden = shown > 0;
+        empty.hidden = matched.length > 0;
+      }
+      if (pager) {
+        if (curEl) {
+          curEl.textContent = String(page);
+        }
+        if (pagesEl) {
+          pagesEl.textContent = String(pages);
+        }
+        if (jumpEl) {
+          jumpEl.max = String(pages);
+          jumpEl.value = String(page);
+        }
+        markOff('[data-pg-first]', page <= 1);
+        markOff('[data-pg-prev]', page <= 1);
+        markOff('[data-pg-next]', page >= pages);
+        markOff('[data-pg-last]', page >= pages);
       }
     }
 
-    bar.addEventListener('input', apply);
-    bar.addEventListener('change', apply);
+    // 翻页：换页之后把这一页的第一条滚进视野 —— 翻页条在列表底下，
+    // 不滚的话翻完还停在页脚，看着像什么都没发生。
+    function goto(n) {
+      if (isNaN(n)) {
+        n = 1;
+      }
+      page = Math.min(Math.max(1, n), pages);
+      apply();
+      var first = matched[(page - 1) * perPage];
+      if (first && first.scrollIntoView) {
+        first.scrollIntoView({ block: 'start' });
+      }
+    }
+
+    bar.addEventListener('input', function () {
+      // 条件一改就算新的一轮，从第一页看起。
+      page = 1;
+      apply();
+    });
+    bar.addEventListener('change', function () {
+      page = 1;
+      apply();
+    });
     if (reset) {
       reset.addEventListener('click', function () {
         if (search) {
           search.value = '';
         }
         selects.forEach(function (s) { s.value = ''; });
+        page = 1;
         apply();
         if (search) {
           search.focus();
         }
       });
     }
+    if (pager) {
+      if (sizeSel) {
+        sizeSel.addEventListener('change', function () {
+          perPage = parseInt(sizeSel.value, 10) || rows.length;
+          page = 1;
+          apply();
+        });
+      }
+      var nav = {
+        '[data-pg-first]': function () { return 1; },
+        '[data-pg-prev]': function () { return page - 1; },
+        '[data-pg-next]': function () { return page + 1; },
+        '[data-pg-last]': function () { return pages; }
+      };
+      Object.keys(nav).forEach(function (sel) {
+        var btn = pager.querySelector(sel);
+        if (btn) {
+          btn.addEventListener('click', function () { goto(nav[sel]()); });
+        }
+      });
+      var go = pager.querySelector('[data-pg-go]');
+      if (go) {
+        go.addEventListener('click', function () { goto(parseInt(jumpEl ? jumpEl.value : '1', 10)); });
+      }
+      if (jumpEl) {
+        jumpEl.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            goto(parseInt(jumpEl.value, 10));
+          }
+        });
+      }
+    }
     apply();
+  });
+
+  // 5b) 服务端翻页的列表（投递日志）：换「每页条数」直接提交那个 GET 表单。
+  //     提交前把页码归到第一页 —— 每页 50 条时的第 9 页，换成每页 200 条就只剩 3 页了。
+  //     没 JS 时这条不生效，「每页」旁边的「跳转」照样能提交。
+  document.querySelectorAll('[data-pg-submit]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var form = sel.form;
+      if (!form) {
+        return;
+      }
+      var pageInput = form.querySelector('input[name=page]');
+      if (pageInput) {
+        pageInput.value = '1';
+      }
+      form.submit();
+    });
   });
 
   // 6) 设置页的外观实时预览。

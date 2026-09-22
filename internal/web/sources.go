@@ -52,10 +52,12 @@ func (s *Server) handleSourceList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.render(w, r, "sources", map[string]any{
-		"Title": "源",
-		"Nav":   "sources",
-		"Rows":  rows,
-		"Base":  settings.BaseURL,
+		"Title":    "源",
+		"Nav":      "sources",
+		"Rows":     rows,
+		"Base":     settings.BaseURL,
+		"PageSize": sourcesPageSize,
+		"Sizes":    perPageOptions,
 	})
 }
 

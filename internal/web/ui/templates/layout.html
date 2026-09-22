@@ -104,3 +104,30 @@
 
      app.js 认 data-pw-toggle，切换的是它前一个兄弟节点的 type 与自己的文字。 */}}
 {{define "pw-toggle"}}<button class="pw-toggle" type="button" data-pw-toggle aria-pressed="false">显示</button>{{end}}
+
+{{/* 列表底部的翻页条（源、规则用这一份；投递日志是服务端翻页，在它自己的模板里）。
+
+     调用时传入这一页的默认每页条数。翻页本身由 app.js 做（和筛选同一个模块）：
+     这些列表整份都在页面上，翻页不该再跑一趟服务端。没有 JS 时整条藏掉
+     （app.css 里 [data-pager-client] 那条），页面退化成完整列表。
+
+     每页条数的下拉、四个方向的按钮、跳转框都只是控件，页码与总页数由脚本填。 */}}
+{{define "pager-client"}}<div class="pager" data-pager-client data-size="{{.PageSize}}">
+  <span class="pg-size">每页
+    <select data-pg-size aria-label="每页条数">
+      {{range .Sizes}}<option value="{{.}}"{{if eq . $.PageSize}} selected{{end}}>{{.}}</option>{{end}}
+    </select>条
+  </span>
+  <span class="pg-nav">
+    <button type="button" class="pg-btn" data-pg-first title="首页" aria-label="首页">«</button>
+    <button type="button" class="pg-btn" data-pg-prev title="上一页" aria-label="上一页">‹</button>
+    <span class="pg-btn cur" data-pg-cur>1</span>
+    <button type="button" class="pg-btn" data-pg-next title="下一页" aria-label="下一页">›</button>
+    <button type="button" class="pg-btn" data-pg-last title="末页" aria-label="末页">»</button>
+  </span>
+  <span class="pg-jump">
+    <input type="number" min="1" value="1" data-pg-input aria-label="跳转到第几页">
+    <span class="muted">/ <span data-pg-pages>1</span> 页</span>
+    <button type="button" class="btn sm" data-pg-go>跳转</button>
+  </span>
+</div>{{end}}

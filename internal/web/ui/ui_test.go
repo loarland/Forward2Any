@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/loarland/Forward2Any/internal/store"
 )
 
 // 页面时间要按 ui.SetLocation 设的时区显示（设置页保存时由 server 同步过来）。
@@ -71,6 +74,72 @@ func TestPasswordInputsHaveToggle(t *testing.T) {
 		}
 		if n := strings.Count(s, `class="pw-group"`); n != nIn {
 			t.Errorf("%s：密码框 %d 个，但 .pw-group 只有 %d 个（输入框和按钮要在同一个 flex 容器里）", f.Name(), nIn, n)
+		}
+	}
+}
+
+// 三个列表页都要能渲染出翻页条。模板写坏（字段名拼错、{{end}} 不配对）时
+// 只有真渲染一次才看得出来 —— 服务端那两处是运行时才报「模板渲染失败」。
+func TestListPagesRenderPager(t *testing.T) {
+	sizes := []int{10, 20, 50, 100, 200}
+	src := &store.Source{ID: 1, Name: "入口", Kind: "webhook", Usage: "in", Enabled: true, Slug: "in1"}
+	rule := &store.Rule{ID: 1, Name: "转发", Enabled: true, FromSourceIDs: []int64{1}, ToSourceIDs: []int64{2}}
+
+	cases := []struct {
+		page string
+		data map[string]any
+		want []string
+	}{
+		{
+			page: "sources",
+			data: map[string]any{
+				"Title": "源", "Nav": "sources", "PageSize": 20, "Sizes": sizes,
+				"Rows": []map[string]any{{"Src": src, "HookURL": "http://x/hook/in1", "Curl": "curl x"}},
+			},
+			// 前端翻页：控件齐了，页码由 app.js 填
+			want: []string{`data-pager-client data-size="20"`, "data-pg-size", "data-pg-first",
+				"data-pg-prev", "data-pg-cur", "data-pg-next", "data-pg-last", "data-pg-go", "每页"},
+		},
+		{
+			page: "rules",
+			data: map[string]any{
+				"Title": "规则", "Nav": "rules", "PageSize": 50, "Sizes": sizes,
+				"Rows": []map[string]any{{"Rule": rule, "From": []string{"入口"}, "To": []string{"目标"}}},
+			},
+			want: []string{`data-pager-client data-size="50"`, "data-pg-cur"},
+		},
+		{
+			page: "deliveries",
+			data: map[string]any{
+				"Title": "投递日志", "Nav": "deliveries", "Total": 120, "HasFilter": false,
+				"Items":   []*store.Delivery{{ID: 1, Status: "success", CreatedAt: 1789980000}},
+				"Sources": []*store.Source{src}, "Rules": []*store.Rule{rule},
+				"FStatus": "", "FSource": int64(0), "FRule": int64(0), "FKeyword": "",
+				"Pager": map[string]any{
+					"Page": 2, "PerPage": 20, "Total": 120, "Pages": 6, "Sizes": sizes,
+					"HasPrev": true, "HasNext": true,
+					"FirstURL": "/deliveries", "PrevURL": "/deliveries",
+					"NextURL": "/deliveries?page=3&per_page=20", "LastURL": "/deliveries?page=6&per_page=20",
+				},
+			},
+			// 服务端翻页：真链接 + 表单（换每页条数要提交）
+			want: []string{`data-pg-cur>2<`, `data-pg-pages>6<`, `name="per_page"`,
+				`href="/deliveries?page=3&amp;per_page=20"`, `name="page" value="2"`,
+				`data-pg-submit`, "跳转"},
+		},
+	}
+
+	for _, c := range cases {
+		var buf bytes.Buffer
+		if err := Render(&buf, c.page, c.data); err != nil {
+			t.Errorf("%s: 渲染失败: %v", c.page, err)
+			continue
+		}
+		html := buf.String()
+		for _, w := range c.want {
+			if !strings.Contains(html, w) {
+				t.Errorf("%s: 渲染结果里没有 %q", c.page, w)
+			}
 		}
 	}
 }

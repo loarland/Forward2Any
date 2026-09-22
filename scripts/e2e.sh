@@ -512,6 +512,63 @@ grep -q "没有符合条件的记录" "$WORK/dl_miss.html" || fail "搜不到时
 grep -q 'name="q" value="mock"' "$WORK/dl_hit.html" || fail "搜索框没有回填关键字"
 pass "投递日志的关键字搜索与空状态正常"
 
+# 列表分页：投递日志是服务端翻页（真链接 + GET 表单），源和规则是前端翻页（app.js）。
+echo
+echo "== 列表分页 =="
+# 先造够记录：每页 10 条时至少要能翻到第二页（payload 要过得了这条规则的过滤条件）
+for _ in $(seq 1 12); do
+  curl -s -o /dev/null -X POST -H 'X-F2A-Token: e2e-secret' -d '{"action":"push"}' "$BASE/hook/gh-e2e"
+done
+sleep 1
+
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries?per_page=10" > "$WORK/pager1.html"
+rows=$(grep -c 'href="/deliveries/[0-9]*"' "$WORK/pager1.html" || true)
+[ "$rows" = "10" ] || fail "每页 10 条时第一页应当列出 10 行，实际 $rows"
+grep -q 'data-pg-cur>1<' "$WORK/pager1.html" || fail "翻页条没有显示当前页"
+pages=$(sed -n 's/.*data-pg-pages>\([0-9]*\)<.*/\1/p' "$WORK/pager1.html" | head -1)
+[ -n "$pages" ] && [ "$pages" -ge 2 ] || fail "记录超过 10 条时总页数应当大于 1，实际 '$pages'"
+grep -q 'name="per_page"' "$WORK/pager1.html" || fail "翻页条里没有「每页条数」的下拉框"
+grep -q '<option value="10" selected>' "$WORK/pager1.html" || fail "「每页条数」没有选中当前值（10）"
+grep -q 'data-pg-submit' "$WORK/pager1.html" || fail "换每页条数时不会重新提交（缺 data-pg-submit）"
+grep -q '跳转' "$WORK/pager1.html" || fail "翻页条里没有跳转按钮"
+grep -q 'aria-label="末页"' "$WORK/pager1.html" || fail "翻页条里没有首页 / 末页按钮"
+
+# 第二页能打开，而且页码超范围时夹回最后一页（不是给一页空白）
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries?per_page=10&page=2" > "$WORK/pager2.html"
+grep -q 'data-pg-cur>2<' "$WORK/pager2.html" || fail "带 page=2 的地址没有翻到第二页"
+grep -q 'name="page" value="2"' "$WORK/pager2.html" || fail "跳转框没有回填当前页"
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries?per_page=10&page=9999" > "$WORK/pager999.html"
+grep -q "data-pg-cur>$pages<" "$WORK/pager999.html" || fail "页码超范围时没有夹到最后一页（应为 $pages）"
+# 档位外的每页条数按默认值处理，不该把页面搞坏
+curl -fsS -b "$JAR" -c "$JAR" "$BASE/deliveries?per_page=999" > "$WORK/pagerbad.html"
+grep -q 'data-pg-cur>1<' "$WORK/pagerbad.html" || fail "档位外的 per_page 应当退回默认值"
+
+# 筛选条件要跟着翻页走（隐藏项 + 链接都得带上）
+curl -fsS -b "$JAR" -c "$JAR" --get --data-urlencode "q=mock" -d "per_page=10" -d "page=2" \
+  "$BASE/deliveries" > "$WORK/pagerq.html"
+grep -q 'name="q" value="mock"' "$WORK/pagerq.html" || fail "翻页时筛选条件没有带过去"
+grep -q 'q=mock' "$WORK/pagerq.html" || fail "翻页链接里没有带关键字"
+
+# 源、规则的翻页在浏览器里做：控件得渲染出来，没有 JS 时整条藏掉
+grep -q 'data-pager-client data-size="20"' "$WORK/sources.html" || fail "源列表没有渲染翻页条"
+grep -q 'data-pg-size' "$WORK/sources.html" || fail "源列表的翻页条没有「每页条数」"
+grep -q '<option value="20" selected>' "$WORK/sources.html" || fail "源列表的「每页条数」没有选中默认值（20）"
+grep -q 'data-pg-last' "$WORK/sources.html" || fail "源列表的翻页条没有末页按钮"
+grep -q 'data-pager-client data-size="50"' "$WORK/rules.html" || fail "规则列表没有渲染翻页条"
+grep -q 'data-pg-go' "$WORK/rules.html" || fail "规则列表的翻页条没有跳转按钮"
+grep -q '\[data-pager-client\] { display: none; }' "$WORK/app.css" \
+  || fail "没有 JS 时源 / 规则的翻页条没有藏掉（会摆一排点不动的控件）"
+pass "投递日志服务端翻页、源与规则前端翻页的控件都就位"
+
+# app.js 里的前端筛选 + 前端翻页逻辑：装了 node 就真跑一遍（假 DOM，见 scripts/js-check.js）
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/scripts/js-check.js" > "$WORK/js-check.log" 2>&1 \
+    || { cat "$WORK/js-check.log"; fail "app.js 的列表筛选 / 前端翻页逻辑没通过"; }
+  pass "app.js 的列表筛选与前端翻页逻辑（node 假 DOM）全部通过"
+else
+  echo "（没装 node，跳过 app.js 的前端逻辑检查）"
+fi
+
 # 未登录访问后台必须被重定向到登录页
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/settings")
 [ "$code" = "303" ] || fail "未登录访问后台应重定向，实际 $code"

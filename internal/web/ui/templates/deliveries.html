@@ -75,10 +75,39 @@
   </tbody>
 </table>
 
-<div class="pager">
-  {{if .HasPrev}}<a class="btn sm" href="{{.PrevURL}}">上一页</a>{{end}}
-  <span class="muted">第 {{.Page}} 页</span>
-  {{if .HasNext}}<a class="btn sm" href="{{.NextURL}}">下一页</a>{{end}}
-</div>
+{{/* 投递日志的翻页在服务端做：记录会一直涨，链接必须是真链接（能收藏、能分享、没 JS 也能用）。
+     整个翻页条是一个 GET 表单，筛选条件用隐藏项带过去 —— 翻页时筛选不会丢。
+     换「每页条数」由 app.js 提交这个表单（没 JS 时按「跳转」也一样，因为 page 也在同一个表单里）。 */}}
+<form class="pager" method="get" action="/deliveries">
+  {{if .FStatus}}<input type="hidden" name="status" value="{{.FStatus}}">{{end}}
+  {{if .FSource}}<input type="hidden" name="source" value="{{.FSource}}">{{end}}
+  {{if .FRule}}<input type="hidden" name="rule" value="{{.FRule}}">{{end}}
+  {{if .FKeyword}}<input type="hidden" name="q" value="{{.FKeyword}}">{{end}}
+
+  <span class="pg-size">每页
+    <select name="per_page" data-pg-submit aria-label="每页条数">
+      {{range .Pager.Sizes}}<option value="{{.}}"{{if eq . $.Pager.PerPage}} selected{{end}}>{{.}}</option>{{end}}
+    </select>条
+  </span>
+
+  <span class="pg-nav">
+    <a class="pg-btn{{if not .Pager.HasPrev}} off{{end}}" href="{{.Pager.FirstURL}}"
+       {{if not .Pager.HasPrev}}aria-disabled="true"{{end}} title="首页" aria-label="首页">«</a>
+    <a class="pg-btn{{if not .Pager.HasPrev}} off{{end}}" href="{{.Pager.PrevURL}}"
+       {{if not .Pager.HasPrev}}aria-disabled="true"{{end}} title="上一页" aria-label="上一页">‹</a>
+    <span class="pg-btn cur" data-pg-cur>{{.Pager.Page}}</span>
+    <a class="pg-btn{{if not .Pager.HasNext}} off{{end}}" href="{{.Pager.NextURL}}"
+       {{if not .Pager.HasNext}}aria-disabled="true"{{end}} title="下一页" aria-label="下一页">›</a>
+    <a class="pg-btn{{if not .Pager.HasNext}} off{{end}}" href="{{.Pager.LastURL}}"
+       {{if not .Pager.HasNext}}aria-disabled="true"{{end}} title="末页" aria-label="末页">»</a>
+  </span>
+
+  <span class="pg-jump">
+    <input type="number" name="page" value="{{.Pager.Page}}" min="1" max="{{.Pager.Pages}}"
+           aria-label="跳转到第几页">
+    <span class="muted">/ <span data-pg-pages>{{.Pager.Pages}}</span> 页</span>
+    <button class="btn sm" type="submit">跳转</button>
+  </span>
+</form>
 {{end}}
 {{end}}

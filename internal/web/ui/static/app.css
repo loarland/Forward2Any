@@ -238,6 +238,12 @@
 [data-list-filter] { display: none; }
 .js [data-list-filter] { display: flex; }
 
+/* 源、规则的翻页同样是前端做的（列表整份在页面上），没 JS 时整条藏掉：
+   页面退化成不带翻页的完整列表，和筛选条的处理一致。
+   投递日志那份没有 data-pager-client，它走服务端，任何时候都显示。 */
+[data-pager-client] { display: none; }
+.js [data-pager-client] { display: flex; }
+
 .meta-line {
   display: flex;
   gap: 10px;
@@ -654,7 +660,55 @@ html:not(.js) [data-pw-toggle] { display: none; }
 .login-card .muted { margin: 0 0 20px; font-size: 13px; }
 .login-card button { width: 100%; margin-top: 4px; }
 
-.pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 13px; }
+/* ---------- 列表底部的翻页条 ----------
+   三个列表页共用一套外观：每页条数、« ‹ 当前页 › »、跳转框。
+   投递日志那份是服务端渲染的真链接（没 JS 也能翻），源和规则那两份由 app.js 填。 */
+.pager { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0 0; font-size: 13px; }
+.pager .pg-size { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.pager .pg-size select {
+  width: auto;
+  min-width: 74px;
+  height: 30px;
+  margin: 0;
+  padding: 0 6px;
+  font-size: 13px;
+}
+.pager .pg-nav { display: inline-flex; align-items: center; gap: 4px; }
+.pager .pg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pager .pg-btn:hover { background: var(--surface-3); }
+.pager .pg-btn.cur {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  cursor: default;
+}
+.pager .pg-btn.off { opacity: .4; pointer-events: none; }
+.pager .pg-jump { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.pager .pg-jump input[type=number] {
+  width: 62px;
+  height: 30px;
+  margin: 0;
+  padding: 0 6px;
+  font-size: 13px;
+  text-align: center;
+}
+.pager .pg-jump button { min-height: 30px; }
 
 /* ---------- 规则表单里的「选源」列表 ----------
    两栏长得一样，只是内容不同，所以样式全部挂在 .picker-col 这一层。

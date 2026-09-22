@@ -11,8 +11,6 @@ import (
 	"github.com/loarland/Forward2Any/internal/store"
 )
 
-const deliveriesPerPage = 50
-
 func (s *Server) registerDeliveries(mux *http.ServeMux) {
 	mux.HandleFunc("GET /deliveries", s.handleDeliveryList)
 	mux.HandleFunc("GET /deliveries/{id}", s.handleDeliveryDetail)
@@ -23,16 +21,10 @@ func (s *Server) registerDeliveries(mux *http.ServeMux) {
 func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	page, _ := strconv.Atoi(q.Get("page"))
-	if page < 1 {
-		page = 1
-	}
 	keyword := strings.TrimSpace(q.Get("q"))
 	f := store.DeliveryFilter{
 		Status:  q.Get("status"),
 		Keyword: keyword,
-		Limit:   deliveriesPerPage,
-		Offset:  (page - 1) * deliveriesPerPage,
 	}
 	if v, err := strconv.ParseInt(q.Get("source"), 10, 64); err == nil {
 		f.InSourceID = v
@@ -41,14 +33,19 @@ func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 		f.RuleID = v
 	}
 
-	items, err := s.store.ListDeliveries(f)
-	if err != nil {
-		s.fail(w, "读取投递记录失败", err)
-		return
-	}
+	// 先数总数再取这一页：每页条数由 URL 决定，页码要按总数夹一次，
+	// 否则手工改成 page=999 会翻到一页空白。
 	total, err := s.store.CountDeliveries(f)
 	if err != nil {
 		s.fail(w, "统计投递记录失败", err)
+		return
+	}
+	p := newPager(q, deliveriesPageSize, total)
+	f.Limit, f.Offset = p.PerPage, p.Offset()
+
+	items, err := s.store.ListDeliveries(f)
+	if err != nil {
+		s.fail(w, "读取投递记录失败", err)
 		return
 	}
 	sources, err := s.store.ListSources()
@@ -62,19 +59,14 @@ func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 翻页链接只带上真正生效的筛选条件，不然 URL 里会挂一串 status=&source=0&rule=0。
-	pageURL := func(p int) string { return deliveryPageURL(f, keyword, p) }
+	p.fillURLs(func(page int) string { return deliveryPageURL(f, keyword, page, p.PerPage) })
 
 	s.render(w, r, "deliveries", map[string]any{
 		"Title":     "投递日志",
 		"Nav":       "deliveries",
 		"Items":     items,
 		"Total":     total,
-		"Page":      page,
-		"HasPrev":   page > 1,
-		"HasNext":   page*deliveriesPerPage < total,
-		"PrevURL":   pageURL(page - 1),
-		"NextURL":   pageURL(page + 1),
+		"Pager":     p,
 		"Sources":   sources,
 		"Rules":     rules,
 		"FStatus":   f.Status,
@@ -87,8 +79,8 @@ func (s *Server) handleDeliveryList(w http.ResponseWriter, r *http.Request) {
 
 // deliveryPageURL 构造投递日志的翻页链接。只带上真正生效的筛选条件，
 // 不然 URL 里会挂一串 status=&source=0&rule=0；关键字也必须带过去，
-// 否则翻到第二页筛选就悄悄丢了。
-func deliveryPageURL(f store.DeliveryFilter, keyword string, page int) string {
+// 否则翻到第二页筛选就悄悄丢了。默认值（第一页、默认每页条数）不写进 URL。
+func deliveryPageURL(f store.DeliveryFilter, keyword string, page, perPage int) string {
 	v := url.Values{}
 	if f.Status != "" {
 		v.Set("status", f.Status)
@@ -102,7 +94,15 @@ func deliveryPageURL(f store.DeliveryFilter, keyword string, page int) string {
 	if keyword != "" {
 		v.Set("q", keyword)
 	}
-	v.Set("page", strconv.Itoa(page))
+	if page > 1 {
+		v.Set("page", strconv.Itoa(page))
+	}
+	if perPage != deliveriesPageSize {
+		v.Set("per_page", strconv.Itoa(perPage))
+	}
+	if len(v) == 0 {
+		return "/deliveries"
+	}
 	return "/deliveries?" + v.Encode()
 }
 

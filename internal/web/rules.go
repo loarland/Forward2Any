@@ -55,6 +55,8 @@ func (s *Server) handleRuleList(w http.ResponseWriter, r *http.Request) {
 		"Nav":      "rules",
 		"Rows":     rows,
 		"NoSource": len(sources) == 0,
+		"PageSize": rulesPageSize,
+		"Sizes":    perPageOptions,
 	})
 }
 

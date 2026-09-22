@@ -266,27 +266,91 @@ func TestRuleFromFormKeepsInputOnError(t *testing.T) {
 	}
 }
 
-// 翻页链接要带上生效的筛选条件，同时不把空条件也塞进 URL。
+// 翻页链接要带上生效的筛选条件，同时不把空条件、第一页和默认每页条数塞进 URL。
 func TestDeliveryPageURL(t *testing.T) {
 	cases := []struct {
 		name    string
 		f       store.DeliveryFilter
 		keyword string
 		page    int
+		perPage int
 		want    string
 	}{
-		{"没有筛选就只剩页码", store.DeliveryFilter{}, "", 3, "/deliveries?page=3"},
-		{"带状态", store.DeliveryFilter{Status: "dead"}, "", 2, "/deliveries?page=2&status=dead"},
-		{"带源和规则", store.DeliveryFilter{InSourceID: 7, RuleID: 9}, "", 1,
-			"/deliveries?page=1&rule=9&source=7"},
-		{"关键字要带上", store.DeliveryFilter{}, "飞书", 4, "/deliveries?page=4&q=%E9%A3%9E%E4%B9%A6"},
-		{"全都有", store.DeliveryFilter{Status: "failed", InSourceID: 1, RuleID: 2}, "a b", 5,
-			"/deliveries?page=5&q=a+b&rule=2&source=1&status=failed"},
+		{"没有筛选就只剩页码", store.DeliveryFilter{}, "", 3, deliveriesPageSize, "/deliveries?page=3"},
+		{"第一页不写进 URL", store.DeliveryFilter{}, "", 1, deliveriesPageSize, "/deliveries"},
+		{"带状态", store.DeliveryFilter{Status: "dead"}, "", 2, deliveriesPageSize, "/deliveries?page=2&status=dead"},
+		{"带源和规则", store.DeliveryFilter{InSourceID: 7, RuleID: 9}, "", 1, deliveriesPageSize,
+			"/deliveries?rule=9&source=7"},
+		{"关键字要带上", store.DeliveryFilter{}, "飞书", 4, deliveriesPageSize, "/deliveries?page=4&q=%E9%A3%9E%E4%B9%A6"},
+		{"换了每页条数就带上", store.DeliveryFilter{Status: "failed"}, "", 2, 200,
+			"/deliveries?page=2&per_page=200&status=failed"},
+		{"全都有", store.DeliveryFilter{Status: "failed", InSourceID: 1, RuleID: 2}, "a b", 5, 10,
+			"/deliveries?page=5&per_page=10&q=a+b&rule=2&source=1&status=failed"},
 	}
 	for _, c := range cases {
-		if got := deliveryPageURL(c.f, c.keyword, c.page); got != c.want {
+		if got := deliveryPageURL(c.f, c.keyword, c.page, c.perPage); got != c.want {
 			t.Errorf("%s: deliveryPageURL = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// 翻页参数的归一化：每页条数只认档位里的值，页码按总数夹住 —— URL 是能随手改的，
+// 改坏了也只会退回第一页 / 默认条数，不会翻出一页空白。
+func TestNewPager(t *testing.T) {
+	ask := func(query string, total int) *pager {
+		q, err := url.ParseQuery(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return newPager(q, deliveriesPageSize, total)
+	}
+
+	p := ask("", 120)
+	if p.Page != 1 || p.PerPage != deliveriesPageSize || p.Pages != 3 {
+		t.Errorf("默认应当是第 1 页 / 每页 %d 条 / 共 3 页，得到 %d / %d / %d",
+			deliveriesPageSize, p.Page, p.PerPage, p.Pages)
+	}
+	if p.Offset() != 0 {
+		t.Errorf("第一页的偏移应当是 0，得到 %d", p.Offset())
+	}
+	if p.HasPrev() || !p.HasNext() {
+		t.Error("第一页应当没有上一页、有下一页")
+	}
+
+	if p = ask("per_page=10&page=3", 120); p.PerPage != 10 || p.Pages != 12 || p.Offset() != 20 {
+		t.Errorf("每页 10 条第 3 页：条数 %d、页数 %d、偏移 %d", p.PerPage, p.Pages, p.Offset())
+	}
+
+	// 不在档位里的每页条数按默认值处理
+	if p = ask("per_page=999", 120); p.PerPage != deliveriesPageSize {
+		t.Errorf("档位外的 per_page 应当退回默认值，得到 %d", p.PerPage)
+	}
+	if p = ask("per_page=abc", 120); p.PerPage != deliveriesPageSize {
+		t.Errorf("非数字的 per_page 应当退回默认值，得到 %d", p.PerPage)
+	}
+	if p = ask("per_page=10", 120); p.PerPage != 10 {
+		t.Errorf("档位内的 per_page 应当生效，得到 %d", p.PerPage)
+	}
+
+	// 页码越界夹回范围内，负数与 0 都当第一页
+	if p = ask("page=999", 120); p.Page != 3 {
+		t.Errorf("页码超出总页数应当夹到最后一页，得到 %d", p.Page)
+	}
+	if p = ask("page=0", 120); p.Page != 1 {
+		t.Errorf("page=0 应当当第一页，得到 %d", p.Page)
+	}
+	if p = ask("page=-5", 120); p.Page != 1 {
+		t.Errorf("负数页码应当当第一页，得到 %d", p.Page)
+	}
+
+	// 一条记录都没有时也是「1 / 1 页」，模板里的页码不会变成 0
+	if p = ask("page=4", 0); p.Pages != 1 || p.Page != 1 {
+		t.Errorf("没有记录时应当是 1 页第 1 页，得到 %d 页第 %d 页", p.Pages, p.Page)
+	}
+
+	// 最后一页只有一条也要能取到（整除与不整除两种）
+	if p = ask("page=3&per_page=50", 101); p.Page != 3 || p.Offset() != 100 {
+		t.Errorf("101 条第 3 页：页码 %d、偏移 %d", p.Page, p.Offset())
 	}
 }
 
