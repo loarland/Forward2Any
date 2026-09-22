@@ -170,7 +170,7 @@ docker run -d --name forward2any --restart unless-stopped \
 | `latest` | **最新发布的版本**，只在打版本标签时更新 |
 | `main` | main 分支上最后一个提交的构建（可能包含没发布的改动） |
 | `1.0.11` | 打了 `v1.0.11` 这样的标签时产生，每个版本一个标签 |
-| `sha-2262653` | 对应某一次提交，想固定到某个具体构建就用它 |
+| `sha-f2e714f` | 对应某一次提交，想固定到某个具体构建就用它 |
 
 需要本地从源码构建时，把 compose 里的 `image:` 行换成 `build: .`。
 
@@ -830,7 +830,7 @@ docker run -d --name forward2any --restart unless-stopped \
 ```
 
 使用 compose 时一条命令即可：`docker compose pull && docker compose up -d`。
-需要固定版本时，把 `latest` 换成 `1.0.11` 或 `sha-2262653` 这类标签，升级时再手动修改。
+需要固定版本时，把 `latest` 换成 `1.0.11` 或 `sha-f2e714f` 这类标签，升级时再手动修改。
 
 **从源码构建**：拉取新代码后重新构建：
 
