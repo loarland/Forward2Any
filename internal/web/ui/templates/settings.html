@@ -67,7 +67,10 @@
     里的客户端地址作为真实来源；其它情况一律按直连对端地址算 —— 这个头谁都能伪造。<br>
     它决定三处看到的是谁：登录失败限流的计数键、源的「来源 IP 白名单」、日志里的来源 IP。<br>
     服务直接暴露（前面没有代理）时<strong>留空</strong>；套了 nginx 就在上面填代理自己的地址，
-    并让代理转交客户端地址：<span class="mono">proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span>。
+    并让代理转交客户端地址：<span class="mono">proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span>。<br>
+    F2A 跑在容器里、代理在宿主机上时填 <strong>compose 网络的网段</strong>（容器看到的直连地址是网桥网关，
+    不是 <span class="mono">127.0.0.1</span>）：<span class="mono">docker network inspect 项目名_default</span>
+    查 <span class="mono">Subnet</span>。
   </div>
 </div>
 

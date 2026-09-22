@@ -188,6 +188,34 @@ F2A_HOST_PORT=9000 docker compose up -d
 > `F2A_BASE_URL` 决定后台显示的回调地址与 curl 示例。服务位于反向代理后面时，
 > 必须填写外部可访问的地址，不能填 `localhost`。
 
+反向代理在宿主机、F2A 在容器里时，容器看到的来源地址**不是 `127.0.0.1`，而是 compose 网络的网关**
+（宿主机访问已发布端口时 Docker 会改写源地址）。「设置 → 反向代理 → 受信代理」要填的是这个网段：
+
+```bash
+# 项目名默认是 clone 下来的目录名（小写）
+docker network inspect forward2any_default --format '{{(index .IPAM.Config 0).Subnet}}'
+```
+
+compose 自动分配网段，换机器或重建网络后可能变。要固定下来就在 `docker-compose.yml` 末尾指定：
+
+```yaml
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
+```
+
+网段必须避开宿主机上已占用的地址段，否则 `docker compose up` 会以
+`Pool overlaps with other one on this address space` 拒绝启动。先列出已有的：
+
+```bash
+docker network inspect $(docker network ls -q) \
+  --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
+
+固定网段后受信代理填 `172.31.240.0/24` 即可；没固定就填上面查出来的那个网段。
+
 ### 方式三：源码运行
 
 需要 Go 1.27 或更高版本：
@@ -782,6 +810,8 @@ sudo tar czf f2a-$(date +%F).tar.gz -C ./data .
   在「设置 → 反向代理 → 受信代理」填入代理自身的 IP 或网段（`172.18.0.2`、`10.0.0.0/8`）；
   此后只有直连地址落在该列表里的请求才采纳 `X-Forwarded-For`，并取其中最后一个不属于该列表的地址。
   它决定登录失败限流的计数键、源的「IP 白名单」与日志里的来源 IP；留空则一切都按直连对端地址算。
+  **反向代理在宿主机、F2A 在容器里时填 compose 网络的网段**（容器看到的是网桥网关，不是 `127.0.0.1`），
+  见[方式二](#方式二docker-compose拉现成镜像)。
 - 邮件源选择「不加密」时密码为明文传输，仅限可信内网使用。
 - 导出配置文件中**含明文密钥**，不要提交到 Git 或公开渠道。
 
