@@ -67,6 +67,19 @@ func (s *sessionStore) destroy(tok string) {
 	delete(s.m, tok)
 }
 
+// destroyOthers 删掉除 keep 之外的所有会话。
+// 改密码之后别的浏览器/设备上挂着的会话不该继续有效，当前这一台留着，
+// 免得管理员刚改完密码就被自己踢回登录页。
+func (s *sessionStore) destroyOthers(keep string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.m {
+		if k != keep {
+			delete(s.m, k)
+		}
+	}
+}
+
 // ---------- 登录失败限流 ----------
 
 // ponytail: 内存计数，重启即清空。bcrypt 本身已有几十毫秒延迟，
@@ -374,7 +387,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, errMsg stri
 }
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		s.renderLogin(w, r, "失败次数过多，请 5 分钟后再试")
 		return
@@ -457,12 +470,124 @@ func isHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
-// clientIP 只信任直连对端地址。X-Forwarded-For 可伪造，
-// 用它做限流键等于把限流关掉。
-func clientIP(r *http.Request) string {
+// clientIP 返回请求的真实来源 IP。
+//
+// 直连对端不在「受信代理」列表里时只认 RemoteAddr —— X-Forwarded-For 谁都能伪造，
+// 拿它做限流键等于把限流关掉。对端是受信代理时，从 X-Forwarded-For 最右侧往回找
+// 第一个不属于受信代理的地址：那是代理亲手写下的、也是最后一个可信任的跳。
+// 列表为空（默认）表示不信任任何代理。
+func (s *Server) clientIP(r *http.Request) string {
+	direct := remoteIP(r)
+	trusted := s.trustedProxyNets()
+	if len(trusted) == 0 || !ipInNets(direct, trusted) {
+		return direct
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		// 认不出来的值不能当客户端地址用（会进日志和限流键），退回直连地址。
+		if net.ParseIP(part) == nil {
+			return direct
+		}
+		if !ipInNets(part, trusted) {
+			return part
+		}
+	}
+	return direct
+}
+
+// trustedProxyNets 取缓存里的受信代理网段。
+func (s *Server) trustedProxyNets() []*net.IPNet {
+	if v, ok := s.trustedProxies.Load().([]*net.IPNet); ok {
+		return v
+	}
+	return nil
+}
+
+// refreshTrustedProxies 重新解析「受信代理」那一栏并缓存。启动时与保存设置后各调一次。
+func (s *Server) refreshTrustedProxies() {
+	settings, err := s.store.Settings()
+	if err != nil {
+		s.log.Error("读取设置失败，受信代理按空处理", "err", err)
+		s.trustedProxies.Store([]*net.IPNet{})
+		return
+	}
+	s.trustedProxies.Store(parseProxyNets(settings.TrustedProxies))
+}
+
+// remoteIP 取直连对端的地址。
+func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// ipInNets 判断地址是否落在任一网段里（IPv4 映射地址由 net.IPNet.Contains 归一）。
+func ipInNets(s string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseProxyNets 把「受信代理」那一栏解析成网段：单个 IP 按 /32、/128 处理。
+// 看不懂的条目跳过（保存时已经被挡下来了，这里只是防御直接改库留下的值）。
+func parseProxyNets(text string) []*net.IPNet {
+	out := []*net.IPNet{}
+	for _, item := range splitList(text) {
+		if strings.Contains(item, "/") {
+			if _, n, err := net.ParseCIDR(item); err == nil {
+				out = append(out, n)
+			}
+			continue
+		}
+		if ip := net.ParseIP(item); ip != nil {
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+		}
+	}
+	return out
+}
+
+// validateProxyNets 校验「受信代理」那一栏：空表示不信任任何代理。
+func validateProxyNets(text string) error {
+	for _, item := range splitList(text) {
+		if strings.Contains(item, "/") {
+			if _, _, err := net.ParseCIDR(item); err != nil {
+				return fmt.Errorf("网段 %q 不合法，应形如 172.18.0.0/16", item)
+			}
+			continue
+		}
+		if net.ParseIP(item) == nil {
+			return fmt.Errorf("地址 %q 不合法，要写 IP 或网段（例如 172.18.0.2、10.0.0.0/8）", item)
+		}
+	}
+	return nil
+}
+
+// splitList 按逗号、分号或换行拆分一个列表项，空项忽略。
+func splitList(text string) []string {
+	out := []string{}
+	for _, item := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	}) {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

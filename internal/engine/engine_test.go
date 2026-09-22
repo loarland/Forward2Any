@@ -350,6 +350,73 @@ func TestRetryGoesThroughFailedThenDead(t *testing.T) {
 	}
 }
 
+// 请求都发到目标了、库里却还显示「没试过」的话，下一轮会把同一条消息再发一遍。
+// 这里在目标端当场查库，确认这次尝试在发送之前就已经记账、并且被占位挡住重投。
+func TestAttemptIsRecordedBeforeSend(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	seen := make(chan *store.Delivery, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if list, err := st.ListDeliveries(store.DeliveryFilter{}); err == nil && len(list) > 0 {
+			seen <- list[0]
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	out := &store.Source{
+		Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: srv.URL, HTTPMethod: "POST", Headers: "{}",
+	}
+	if err := st.SaveSource(out); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d := &store.Delivery{
+		TraceID: "t1", OutSourceID: out.ID, Status: store.StatusPending,
+		Payload: `{"a":1}`, Rendered: `{"a":1}`, ReqHeaders: "{}",
+	}
+	if err := st.CreateDelivery(d); err != nil {
+		t.Fatal(err)
+	}
+
+	eng.attempt(d)
+
+	select {
+	case observed := <-seen:
+		if observed.Attempt != 1 {
+			t.Errorf("发送时库里应当已经记下 attempt=1，得到 %d", observed.Attempt)
+		}
+		if observed.Status != store.StatusPending {
+			t.Errorf("发送期间状态应是 pending（占位），得到 %q", observed.Status)
+		}
+		if observed.NextRetryAt <= time.Now().Unix() {
+			t.Errorf("发送期间 next_retry_at 应当在未来（占位），得到 %d", observed.NextRetryAt)
+		}
+	default:
+		t.Fatal("目标没有收到请求")
+	}
+
+	got, err := st.GetDelivery(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != store.StatusSuccess {
+		t.Errorf("投递成功后状态应为 success，得到 %q", got.Status)
+	}
+	if got.Attempt != 1 {
+		t.Errorf("尝试次数应为 1，得到 %d", got.Attempt)
+	}
+	if got.NextRetryAt != 0 {
+		t.Errorf("投递成功后不该再留重试时间，得到 %d", got.NextRetryAt)
+	}
+}
+
 // 成功路径：投递完成后状态为 success，并记录响应码。
 func TestDeliverySuccessRecordsResponse(t *testing.T) {
 	st, err := store.Open(t.TempDir())

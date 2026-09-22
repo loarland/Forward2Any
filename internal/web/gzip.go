@@ -83,7 +83,6 @@ func (w *gzipResponse) Write(p []byte) (int, error) {
 
 // close 收尾。必须由中间件在处理器返回后调用：gzip 流的尾巴（以及校验和）
 // 是在 Close 里写出去的，漏了的话浏览器拿到的是截断的响应。
-// 显式声明 Flush 会绕过压缩器，这里不实现 Flush，让 net/http 走默认路径。
 func (w *gzipResponse) close() {
 	if w.gz == nil {
 		return
@@ -91,6 +90,26 @@ func (w *gzipResponse) close() {
 	_ = w.gz.Close()
 	gzipPool.Put(w.gz)
 	w.gz = nil
+}
+
+// Unwrap 让 http.ResponseController 能穿过这层包装找到底下的 ResponseWriter。
+func (w *gzipResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush 先推压缩器再推底下的写入器：直接透传会绕过压缩器，
+// 客户端只会收到半截 gzip 流。目前没有流式接口，实现它只是不让包装层漏掉 Flusher。
+func (w *gzipResponse) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.compress {
+		if w.gz != nil {
+			_ = w.gz.Flush()
+		}
+		return
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func gzipIfAccepted(next http.Handler) http.Handler {

@@ -102,6 +102,24 @@ func (s *Store) UpdateDelivery(d *Delivery) error {
 	return nil
 }
 
+// ClaimDelivery 在真正发送之前先把这次尝试记账：写入新的尝试次数，并把 next_retry_at
+// 推到租约到期时刻 —— 发送期间这条记录不会被再次取出来（同一轮 drain 的后续批次，
+// 或者进程被强杀后的接管）。
+//
+// 顺序是有意的：写不进去（磁盘满、库忙）时调用方会放弃这次发送，而不是「消息已经发出去，
+// 库里却还显示没发过」—— 后者下一轮会把同一条再发一遍，attempt 也不会增长。
+func (s *Store) ClaimDelivery(id int64, attempt int, leaseUntil int64) error {
+	res, err := s.db.Exec(`UPDATE deliveries SET attempt=?, next_retry_at=?, updated_at=? WHERE id=?`,
+		attempt, leaseUntil, nowUnix(), id)
+	if err != nil {
+		return fmt.Errorf("投递记账 %d: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("投递记账 %d: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 func (s *Store) GetDelivery(id int64) (*Delivery, error) {
 	v, err := scanDelivery(s.db.QueryRow(deliverySelect+` WHERE d.id = ?`, id))
 	if isNoRows(err) {

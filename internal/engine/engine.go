@@ -19,6 +19,10 @@ const (
 	pollInterval   = 2 * time.Second
 	clientTimeout  = 30 * time.Second
 	maxRespBytes   = 32 << 10
+
+	// sendLease 是一条记录在发送期间占位的时长。正常路径下发送结束就立刻写回结果，
+	// 只有进程被强杀（SIGKILL、容器被 kill）才会留下占位，等它过期后自动重投。
+	sendLease = 2 * time.Minute
 )
 
 // Engine 负责把入站事件按规则分发出去，并异步投递、失败重试。
@@ -31,9 +35,10 @@ type Engine struct {
 	stop   chan struct{}
 	wg     sync.WaitGroup
 
-	mu      sync.Mutex
-	running bool
-	proxied map[string]*http.Client // 按代理地址缓存的客户端，受 mu 保护
+	mu          sync.Mutex
+	running     bool
+	proxyURL    string       // 当前缓存了客户端的代理地址，受 mu 保护
+	proxyClient *http.Client // 上面那个地址对应的客户端
 }
 
 func New(st *store.Store, log *slog.Logger) *Engine {
@@ -48,8 +53,8 @@ func New(st *store.Store, log *slog.Logger) *Engine {
 
 // clientFor 返回这次投递要用的 HTTP 客户端：配了代理就走代理，没配就直连。
 //
-// ponytail: 按代理地址缓存客户端，不设上限 —— 地址只来自设置页那一个输入框，
-// 条目数实际是常数；真要按地址无限增长，再加淘汰。
+// 只缓存当前这一个代理地址的客户端：地址来自设置页那唯一的输入框，任何时刻只有一个生效值。
+// 换了地址就整个换掉（旧客户端正在跑的请求不受影响），缓存不会随着改来改去变大。
 func (e *Engine) clientFor(proxyURL string) (*http.Client, error) {
 	if proxyURL == "" {
 		return e.client, nil
@@ -57,8 +62,8 @@ func (e *Engine) clientFor(proxyURL string) (*http.Client, error) {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if c, ok := e.proxied[proxyURL]; ok {
-		return c, nil
+	if e.proxyClient != nil && e.proxyURL == proxyURL {
+		return e.proxyClient, nil
 	}
 
 	u, err := url.Parse(proxyURL)
@@ -70,10 +75,7 @@ func (e *Engine) clientFor(proxyURL string) (*http.Client, error) {
 	tr.Proxy = http.ProxyURL(u)
 	c := &http.Client{Timeout: clientTimeout, Transport: tr}
 
-	if e.proxied == nil {
-		e.proxied = make(map[string]*http.Client)
-	}
-	e.proxied[proxyURL] = c
+	e.proxyURL, e.proxyClient = proxyURL, c
 	return c, nil
 }
 
@@ -351,6 +353,14 @@ func (e *Engine) attempt(d *store.Delivery) {
 	}
 
 	d.Attempt++
+	// 先占位再发送：这一次尝试（含 attempt 自增）必须先落库。写不进去就本轮不发 ——
+	// 发出去之后再更新失败会留下一条「看起来没投过」的记录，下一轮重复投递，
+	// 而且 attempt 不增长，重试上限也就形同虚设。
+	if err := e.store.ClaimDelivery(d.ID, d.Attempt, time.Now().Unix()+int64(sendLease/time.Second)); err != nil {
+		e.log.Error("投递记账失败，本轮不发送", "id", d.ID, "目标", out.Name, "err", err)
+		return
+	}
+
 	var (
 		code     int
 		respBody string

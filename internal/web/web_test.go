@@ -343,18 +343,95 @@ func TestValidateSourceShape(t *testing.T) {
 		t.Error("应当自动生成 slug")
 	}
 
-	// 轮询间隔过短会被纠正，而不是报错
+	// 轮询间隔过短直接报错，不静默换成别的值
 	short := base()
 	short.Kind = "email"
 	short.Usage = "in"
 	short.IMAPHost = "imap.example.com"
 	short.IMAPUser = "u"
 	short.IMAPInterval = 1
-	if err := validateSourceShape(short); err != nil {
-		t.Fatalf("不该报错: %v", err)
+	if err := validateSourceShape(short); err == nil {
+		t.Error("轮询间隔小于 10 秒应当报错")
 	}
-	if short.IMAPInterval < 10 {
-		t.Errorf("间隔应被纠正到至少 10 秒，得到 %d", short.IMAPInterval)
+
+	// 正好 10 秒是允许的，且值原样保留
+	ok := base()
+	ok.Kind = "email"
+	ok.Usage = "in"
+	ok.IMAPHost = "imap.example.com"
+	ok.IMAPUser = "u"
+	ok.IMAPInterval = 10
+	if err := validateSourceShape(ok); err != nil {
+		t.Fatalf("10 秒的轮询间隔应当合法: %v", err)
+	}
+	if ok.IMAPInterval != 10 {
+		t.Errorf("轮询间隔应原样保留，得到 %d", ok.IMAPInterval)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	trust := func(text string) *Server {
+		s := &Server{}
+		s.trustedProxies.Store(parseProxyNets(text))
+		return s
+	}
+	ask := func(s *Server, remote, xff string) string {
+		r := httptest.NewRequest("POST", "http://example.com/login", nil)
+		r.RemoteAddr = remote
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return s.clientIP(r)
+	}
+
+	// 没配受信代理：X-Forwarded-For 一律不看
+	none := trust("")
+	if got := ask(none, "203.0.113.7:5000", "1.2.3.4"); got != "203.0.113.7" {
+		t.Errorf("未受信时应取直连地址，得到 %q", got)
+	}
+
+	// 直连是受信代理：取最右侧不属于受信代理的那一跳
+	one := trust("172.18.0.2")
+	net16 := trust("172.18.0.0/16")
+	if got := ask(one, "172.18.0.2:5000", "198.51.100.9"); got != "198.51.100.9" {
+		t.Errorf("受信代理转交时应取真实客户端地址，得到 %q", got)
+	}
+	if got := ask(one, "172.18.0.2:5000", "198.51.100.9, 10.0.0.1"); got != "10.0.0.1" {
+		t.Errorf("应取最右侧一跳，得到 %q", got)
+	}
+	// 链路上还有一层受信代理时继续往左找
+	if got := ask(net16, "172.18.0.2:5000", "198.51.100.9, 172.18.0.3"); got != "198.51.100.9" {
+		t.Errorf("应跳过受信网段继续往左找，得到 %q", got)
+	}
+
+	// 直连不是受信代理：伪造的 XFF 不采纳
+	if got := ask(one, "203.0.113.7:5000", "1.2.3.4"); got != "203.0.113.7" {
+		t.Errorf("非受信来源不该采纳 XFF，得到 %q", got)
+	}
+	// 网段形式
+	if got := ask(net16, "172.18.5.6:5000", "198.51.100.9"); got != "198.51.100.9" {
+		t.Errorf("网段内的直连地址应受信，得到 %q", got)
+	}
+	// XFF 里是垃圾值：退回直连地址，不能把垃圾当客户端地址用
+	if got := ask(one, "172.18.0.2:5000", "not-an-ip"); got != "172.18.0.2" {
+		t.Errorf("XFF 值不合法时应退回直连地址，得到 %q", got)
+	}
+	// XFF 全是受信代理：退回直连地址
+	if got := ask(net16, "172.18.0.2:5000", "172.18.0.9"); got != "172.18.0.2" {
+		t.Errorf("XFF 全是受信地址时应退回直连地址，得到 %q", got)
+	}
+}
+
+func TestValidateProxyNets(t *testing.T) {
+	for _, good := range []string{"", "172.18.0.2", "10.0.0.0/8", "172.18.0.2, 10.0.0.0/8", "172.18.0.2\n10.0.0.0/8", "::1"} {
+		if err := validateProxyNets(good); err != nil {
+			t.Errorf("%q 应当合法: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"nginx", "10.0.0.1/33", "172.18.0.2:8080"} {
+		if err := validateProxyNets(bad); err == nil {
+			t.Errorf("%q 应当报错", bad)
+		}
 	}
 }
 

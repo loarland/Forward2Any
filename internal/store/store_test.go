@@ -319,6 +319,58 @@ func TestDueDeliveriesCoversPendingAndFailed(t *testing.T) {
 	}
 }
 
+// 投递记账：把这次尝试写进库，并把记录从「到期队列」里挪出去（占位），
+// 免得同一条消息在发送期间被再取一次。
+func TestClaimDeliveryTakesRowOutOfDueQueue(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	d := &Delivery{Status: StatusPending, NextRetryAt: 0, Payload: "x"}
+	if err := st.CreateDelivery(d); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := st.DueDeliveries(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("刚建的记录应当到期，得到 %d 条", len(due))
+	}
+
+	leaseUntil := time.Now().Unix() + 120
+	if err := st.ClaimDelivery(d.ID, 1, leaseUntil); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err = st.DueDeliveries(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Errorf("占位期间不该再被取出来，得到 %d 条", len(due))
+	}
+
+	got, err := st.GetDelivery(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Attempt != 1 {
+		t.Errorf("尝试次数应当已经落库，得到 %d", got.Attempt)
+	}
+	if got.NextRetryAt != leaseUntil {
+		t.Errorf("占位时刻应当写进 next_retry_at，得到 %d（期望 %d）", got.NextRetryAt, leaseUntil)
+	}
+
+	// 记录不在了要报错，让调用方放弃这次发送而不是照发不误
+	if err := st.ClaimDelivery(d.ID+999, 1, leaseUntil); err == nil {
+		t.Error("记录不存在时应当报错")
+	}
+}
+
 // 关键字搜索要能命中 JOIN 出来的规则名和源名，并且 CountDeliveries 的条数
 // 必须和 ListDeliveries 一致 —— 统计那条 SQL 一旦漏掉 JOIN，这里就会炸。
 func TestDeliveryKeywordFilter(t *testing.T) {

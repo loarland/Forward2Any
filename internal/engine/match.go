@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/loarland/Forward2Any/internal/store"
 )
@@ -20,6 +21,26 @@ func Match(filters []store.Filter, data any) bool {
 		}
 	}
 	return true
+}
+
+// regexCache 缓存编译好的正则：过滤条件每条入站事件都要过一遍，
+// 同一个模式反复 Compile 是白花的开销。模式只来自规则配置，条目数有限。
+//
+// 正则用 RE2 语法，匹配耗时与输入长度成线性，没有回溯爆炸的问题。
+var regexCache sync.Map // map[string]*regexp.Regexp
+
+// compiledRegex 返回编译好的正则；模式不合法返回 nil。
+// 编译失败的（配置本身写错了）不入缓存，免得把错误也缓存住。
+func compiledRegex(pattern string) *regexp.Regexp {
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	regexCache.Store(pattern, re)
+	return re
 }
 
 func matchOne(f store.Filter, data any) bool {
@@ -54,8 +75,8 @@ func matchOne(f store.Filter, data any) bool {
 	case "not_contains":
 		return !contains(got, f.Value)
 	case "regex":
-		re, err := regexp.Compile(fmt.Sprint(f.Value))
-		if err != nil {
+		re := compiledRegex(fmt.Sprint(f.Value))
+		if re == nil {
 			return false
 		}
 		return re.MatchString(fmt.Sprint(got))

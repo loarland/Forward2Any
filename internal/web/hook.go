@@ -30,7 +30,10 @@ func (s *Server) registerHook(root *http.ServeMux) {
 }
 
 func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	default:
+		w.Header().Set("Allow", "POST, PUT, PATCH")
 		http.Error(w, "该端点只接受 POST/PUT/PATCH", http.StatusMethodNotAllowed)
 		return
 	}
@@ -51,7 +54,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !ipAllowed(src.IPAllow, ip) {
 		s.log.Warn("来源 IP 不在白名单内", "源", src.Name, "ip", ip)
 		http.Error(w, "来源 IP 未授权", http.StatusForbidden)

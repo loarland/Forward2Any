@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>设置</h1>
-    <div class="sub">监听端口、管理员账号、访问来源、网络代理、外观、重试策略与配置导入导出</div>
+    <div class="sub">监听端口、管理员账号、访问来源、反向代理、网络代理、外观、重试策略与配置导入导出</div>
   </div>
 </div>
 
@@ -53,6 +53,21 @@
     只写主机名（<span class="mono">hooks.example.com</span>）表示协议不限，写全
     <span class="mono">https://</span> 开头的就只认那个协议；「回调基址」里的主机名默认就认，不用重复填。<br>
     关掉开关就不校验来源，只剩会话 cookie 的 SameSite 兜着，一般不需要关。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>反向代理</h2>
+  <label>
+    <span>受信代理 <span class="hint">每行或用逗号分隔，例如 172.18.0.2、10.0.0.0/8</span></span>
+    <textarea name="trusted_proxies" rows="2" placeholder="172.18.0.2">{{.S.TrustedProxies}}</textarea>
+  </label>
+  <div class="note">
+    只有当请求的直连地址落在这个列表里时，才采纳 <span class="mono">X-Forwarded-For</span>
+    里的客户端地址作为真实来源；其它情况一律按直连对端地址算 —— 这个头谁都能伪造。<br>
+    它决定三处看到的是谁：登录失败限流的计数键、源的「来源 IP 白名单」、日志里的来源 IP。<br>
+    服务直接暴露（前面没有代理）时<strong>留空</strong>；套了 nginx 就在上面填代理自己的地址，
+    并让代理转交客户端地址：<span class="mono">proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span>。
   </div>
 </div>
 
@@ -260,7 +275,8 @@
     <strong>导入是整体替换</strong>：文件里没有的源与规则会被删掉，文件里带着的设置项覆盖本机同名项，
     文件里没带的设置项保持原样。整份文件先校验后落库，任何一处不合法都当作没导入过。
     <br>
-    源里的密钥（Webhook 密钥、SMTP / IMAP 密码、渠道加签密钥）原样导出，这个文件要当敏感文件保管。
+    源里的密钥（Webhook 密钥、SMTP / IMAP 密码、Telegram Bot Token、渠道加签密钥）原样导出，
+    <strong>这个文件是敏感文件</strong>：不要提交到 Git，也不要通过聊天工具或邮件外发。
   </div>
 </div>
 {{end}}

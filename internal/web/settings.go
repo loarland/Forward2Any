@@ -64,12 +64,15 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 整段「读 → 改 → 写」拿着锁：SaveSettings 写回全部字段，并发保存会互相覆盖。
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+
 	current, err := s.store.Settings()
 	if err != nil {
 		s.fail(w, "读取设置失败", err)
 		return
 	}
-
 	next := *current
 	next.WebPort = formInt(r, "web_port", current.WebPort)
 	next.AdminUser = formValue(r, "admin_user")
@@ -84,6 +87,10 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		next.TrustedOrigins = formatAllowedOrigins(trusted)
+	}
+	// 受信代理和上面一样，只在表单确实提交了它时才动。
+	if _, ok := r.PostForm["trusted_proxies"]; ok {
+		next.TrustedProxies = strings.TrimSpace(formValue(r, "trusted_proxies"))
 	}
 	// 开关：模板里复选框后面跟了个 hidden 的 "0"，所以未勾选时也能读到明确的值。
 	if _, ok := r.PostForm["origin_check"]; ok {
@@ -162,11 +169,15 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if passwordChanged {
 		// 改完密码后台就该解锁，不必等重启。
 		s.refreshPassFlag()
+		// 旧密码签发的会话一并作废，当前这台留着继续用。
+		s.sessions.destroyOthers(sessionToken(r))
 	}
 	// 换配色/亮暗同样立刻生效，不用重启进程。
 	s.refreshTheme()
 	// 回调基址、开关或允许列表可能改了，跨站校验策略跟着更新。
 	s.refreshOriginPolicy()
+	// 受信代理列表可能改了，来源 IP 的判定跟着更新。
+	s.refreshTrustedProxies()
 	// 时区可能改了：页面时间和日志时间都跟着换。
 	s.refreshTimezone()
 	s.log.Info("更新设置", "端口", next.WebPort, "管理员", next.AdminUser)
@@ -208,8 +219,10 @@ func validateSettings(v *store.Settings) error {
 	if v.RetryMax < 1 || v.RetryMax > 100 {
 		return errors.New("最大重试次数需在 1–100 之间")
 	}
-	if v.RetryBackoffSeconds < 1 {
-		return errors.New("重试退避基数至少 1 秒")
+	// 退避基数是翻倍的起点，投递时等待上限固定 3600 秒（见 engine.backoff）：
+	// 填一个更大的数不会有额外效果，只会让界面上的值跟实际等待对不上。
+	if v.RetryBackoffSeconds < 1 || v.RetryBackoffSeconds > 3600 {
+		return errors.New("重试退避基数需在 1–3600 秒之间")
 	}
 	if v.PayloadMaxBytes < 1024 {
 		return errors.New("报文保存上限至少 1024 字节")
@@ -223,6 +236,11 @@ func validateSettings(v *store.Settings) error {
 		if _, err := time.LoadLocation(v.Timezone); err != nil {
 			return fmt.Errorf("时区 %q 不认识。要填 IANA 名称，例如 Asia/Shanghai、Asia/Tokyo、Europe/London", v.Timezone)
 		}
+	}
+	// 受信代理列表为空表示不信任任何代理；填了就必须是 IP 或网段，
+	// 否则这条会静默失效，用户以为配上了其实还在按代理地址算。
+	if err := validateProxyNets(v.TrustedProxies); err != nil {
+		return fmt.Errorf("受信代理：%v", err)
 	}
 	// 开了人机校验就必须有密钥：只勾开关不填密钥会把登录挡死（前端控件渲染不出来）。
 	if v.TurnstileEnabled {
@@ -408,6 +426,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, fmt.Sprintf("配置版本 %d 不受支持（当前支持 %d）", ef.Version, configVersion), "")
 		return
 	}
+
+	// 导入是整体替换，同样要跟保存设置排队，否则两边的改动会互相盖掉。
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 
 	// 先把三样东西都验完再落库：任何一处不合法都当作没导入过。
 	sources, err := importSources(ef.Sources)

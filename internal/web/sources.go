@@ -423,7 +423,8 @@ func validateSourceShape(v *store.Source) error {
 		}
 		if v.IMAPInterval < 10 {
 			// 轮询太频繁对邮件服务器不礼貌，也容易被封。
-			v.IMAPInterval = 60
+			// 早先是静默改成 60 秒：用户填的值被悄悄换掉，界面显示的间隔跟实际跑的还对不上。
+			return errors.New("轮询间隔至少 10 秒")
 		}
 	}
 

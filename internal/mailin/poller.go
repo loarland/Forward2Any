@@ -173,9 +173,11 @@ func (p *Poller) reconcile() {
 }
 
 func (p *Poller) poll(ctx context.Context, src *store.Source) {
+	// 兜底：小于 10 秒的间隔在保存时就会被挡掉（见 validateSourceShape），
+	// 这里只管直接改库留下的值，按 10 秒走，不静默换成别的数。
 	interval := time.Duration(src.IMAPInterval) * time.Second
 	if interval < 10*time.Second {
-		interval = 60 * time.Second
+		interval = 10 * time.Second
 	}
 
 	// 先等一个（带抖动的）间隔再开工：多个源同时连同一台邮件服务器会被限流。
@@ -221,7 +223,9 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 		return fmt.Errorf("打开邮箱 %s: %w", src.IMAPFolder, err)
 	}
 
-	ids, err := c.Search(&imap.SearchCriteria{WithoutFlags: []string{imap.SeenFlag}})
+	// 用 UID 而不是序号：邮件序号在别的客户端 EXPUNGE 之后会整体前移，
+	// 搜索完再按序号取/标记就可能错位，标错已读或者漏处理。
+	ids, err := c.UidSearch(&imap.SearchCriteria{WithoutFlags: []string{imap.SeenFlag}})
 	if err != nil {
 		return fmt.Errorf("搜索未读邮件: %w", err)
 	}
@@ -243,11 +247,15 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 	_ = conn.SetDeadline(time.Now().Add(cycleBudget))
 
 	done := make(chan error, 1)
-	go func() { done <- c.Fetch(seqset, items, ch) }()
+	go func() { done <- c.UidFetch(seqset, items, ch) }()
 
 	var handled []uint32
 	for msg := range ch {
 		if ctx.Err() != nil {
+			// 取消后必须继续把 ch 读空，不能就这么跳出去：go-imap v1 的 Fetch 只有把
+			// 消息全部投递完才会返回，没人接收它就会永久阻塞在通道发送上，于是 done
+			// 永远收不到、Stop() 的 wg.Wait() 跟着卡死。
+			drainInBackground(ch)
 			break
 		}
 		raw := msg.GetBody(section)
@@ -256,14 +264,14 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 		}
 		n, err := normalize(raw, src)
 		if err != nil {
-			p.log.Warn("解析邮件失败，跳过", "源", src.Name, "seq", msg.SeqNum, "err", err)
+			p.log.Warn("解析邮件失败，跳过", "源", src.Name, "uid", msg.Uid, "err", err)
 			continue
 		}
 
 		if engine.IsLoop(n.Hops, src.Slug) {
 			p.log.Warn("检测到循环邮件，已拦截", "源", src.Name, "跳链", strings.Join(n.Hops, ","))
 			p.eng.RecordDropped(src, n.TraceID, string(n.Payload), "检测到循环转发，已拦截", strings.Join(n.Hops, ","))
-			handled = append(handled, msg.SeqNum)
+			handled = append(handled, msg.Uid)
 			continue
 		}
 
@@ -281,7 +289,7 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 			p.log.Error("提交邮件事件失败", "源", src.Name, "err", err)
 			continue
 		}
-		handled = append(handled, msg.SeqNum)
+		handled = append(handled, msg.Uid)
 	}
 	if err := <-done; err != nil {
 		return fmt.Errorf("拉取邮件: %w", err)
@@ -295,11 +303,20 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 	seen := new(imap.SeqSet)
 	seen.AddNum(handled...)
 	op := imap.FormatFlagsOp(imap.AddFlags, true)
-	if err := c.Store(seen, op, []interface{}{imap.SeenFlag}, nil); err != nil {
+	if err := c.UidStore(seen, op, []interface{}{imap.SeenFlag}, nil); err != nil {
 		return fmt.Errorf("标记已读: %w", err)
 	}
 	p.log.Info("处理邮件", "源", src.Name, "封数", len(handled))
 	return nil
+}
+
+// drainInBackground 交给后台协程把 ch 读空。取消轮询时用得上：
+// 生产者（go-imap 的 Fetch）只有把消息全部投递完才会返回，没人接收就会永久阻塞。
+func drainInBackground(ch <-chan *imap.Message) {
+	go func() {
+		for range ch {
+		}
+	}()
 }
 
 func dial(src *store.Source) (*client.Client, net.Conn, error) {

@@ -42,11 +42,20 @@ type Server struct {
 	originCheckOff atomic.Bool
 	allowedOrigins atomic.Value
 
+	// trustedProxies 是「受信代理」网段的缓存（[]*net.IPNet）。
+	// 每个请求都要判一次直连地址，同样不能每次查库。
+	trustedProxies atomic.Value
+
 	// Turnstile：turnstileOff 是 F2A_TURNSTILE=off 的救命开关，
 	// turnstileURL 是服务端校验地址（默认官方，可用环境变量指到自建中转）。
 	// 这两个在 New 里读一次，改环境变量要重启才生效。
 	turnstileOff bool
 	turnstileURL string
+
+	// settingsMu 串行化「读设置 → 合并表单 → 整份写回」这段读-改-写。
+	// SaveSettings 写的是全部字段，两次并发保存里后提交的那次会带着自己那份
+	// 表单值把另一次刚改的字段覆盖回去（丢更新）。配置导入整体替换，同理。
+	settingsMu sync.Mutex
 
 	mu   sync.Mutex
 	srv  *http.Server
@@ -72,6 +81,7 @@ func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.P
 	s.refreshPassFlag()
 	s.refreshTheme()
 	s.refreshOriginPolicy()
+	s.refreshTrustedProxies()
 	s.refreshTimezone()
 	return s
 }
@@ -195,9 +205,13 @@ func (s *Server) listenLocked(port int) error {
 	if err != nil {
 		return fmt.Errorf("监听端口 %d 失败: %w", port, err)
 	}
+	// 光有读头超时挡不住慢速 body（10MB 的报文可以一直挤牙膏）和慢读客户端，
+	// 两者都能长期占住一条连接；Rebind 时那 5 秒的 Shutdown 也会被它们拖住。
 	srv := &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute, // 含报文，给 10MB 慢速上行留余量
+		WriteTimeout:      time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 	s.ln, s.srv, s.port = ln, srv, port
@@ -339,6 +353,20 @@ type statusWriter struct {
 	http.ResponseWriter
 	status int
 	wrote  bool
+}
+
+// Unwrap 让 http.ResponseController 能穿过这层包装找到底下的 ResponseWriter。
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush 透传到底下的写入器。
+// 目前没有流式接口，但包装层不实现它，底下的 Flusher 就彻底失联了。
+func (w *statusWriter) Flush() {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (w *statusWriter) WriteHeader(code int) {

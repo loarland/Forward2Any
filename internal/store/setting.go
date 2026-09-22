@@ -39,6 +39,7 @@ const (
 	KeyProxyAddr           = "proxy_addr"
 	KeyTrustedOrigins      = "trusted_origins"
 	KeyOriginCheck         = "origin_check"
+	KeyTrustedProxies      = "trusted_proxies"
 	KeyTimezone            = "timezone"
 	KeyTurnstileEnabled    = "turnstile_enabled"
 	KeyTurnstileSiteKey    = "turnstile_site_key"
@@ -62,6 +63,7 @@ type Settings struct {
 	ProxyAddr           string // host:port，可带 用户名:密码@
 	TrustedOrigins      string // 允许列表，逗号或换行分隔
 	OriginCheck         bool   // 是否校验写请求的 Origin/Referer
+	TrustedProxies      string // 受信代理的 IP / 网段，逗号或换行分隔；空表示不信任任何代理
 	Timezone            string // IANA 时区名，如 Asia/Shanghai；留空表示跟随系统
 
 	// Cloudflare Turnstile（登录人机校验）。默认关闭：没配密钥时整页不加载任何外部脚本。
@@ -88,6 +90,7 @@ func DefaultSettings() *Settings {
 		ProxyAddr:           "",
 		TrustedOrigins:      "",
 		OriginCheck:         true,
+		TrustedProxies:      "",
 		Timezone:            "",
 	}
 }
@@ -130,6 +133,7 @@ func (s *Store) Bootstrap(in BootstrapInput) (usingDefaultPassword bool, err err
 	setIfMissing(KeyProxyAddr, exist.ProxyAddr)
 	setIfMissing(KeyTrustedOrigins, exist.TrustedOrigins)
 	setIfMissing(KeyOriginCheck, boolStr(exist.OriginCheck))
+	setIfMissing(KeyTrustedProxies, exist.TrustedProxies)
 	setIfMissing(KeyTimezone, exist.Timezone)
 	setIfMissing(KeyTurnstileEnabled, boolStr(exist.TurnstileEnabled))
 	setIfMissing(KeyTurnstileSiteKey, exist.TurnstileSiteKey)
@@ -187,6 +191,7 @@ func (s *Store) Settings() (*Settings, error) {
 	d.ProxyAddr = get(KeyProxyAddr, d.ProxyAddr)
 	d.TrustedOrigins = get(KeyTrustedOrigins, d.TrustedOrigins)
 	d.OriginCheck = get(KeyOriginCheck, "1") == "1"
+	d.TrustedProxies = strings.TrimSpace(raw[KeyTrustedProxies])
 	// 时区没有「默认值」可言：留空就是跟随系统，所以不能用 get 的兜底语义。
 	d.Timezone = strings.TrimSpace(raw[KeyTimezone])
 	// Turnstile 默认关闭（raw 里没有这个键就是关），密钥按原样存，不做 trim 之外的加工。
@@ -283,6 +288,7 @@ func (s *Store) SaveSettings(v *Settings) error {
 		KeyProxyAddr:           v.ProxyAddr,
 		KeyTrustedOrigins:      v.TrustedOrigins,
 		KeyOriginCheck:         boolStr(v.OriginCheck),
+		KeyTrustedProxies:      v.TrustedProxies,
 		KeyTimezone:            v.Timezone,
 		KeyTurnstileEnabled:    boolStr(v.TurnstileEnabled),
 		KeyTurnstileSiteKey:    v.TurnstileSiteKey,
