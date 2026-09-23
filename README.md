@@ -1053,8 +1053,8 @@ internal/engine/       转发引擎：过滤器、模板渲染、出站 Webhook 
 internal/mailin/       IMAP 轮询收信
 internal/web/          HTTP 层：后台、登录、接收端点、监听端口生命周期
 internal/web/ui/       内嵌的模板与静态资源（htmx、CSS）—— 没有 npm 构建链
-scripts/               端到端验证脚本、配色生成脚本
-docs/screenshots/      上面「界面预览」用到的截图
+scripts/               端到端验证脚本、配色生成脚本、截图脚本
+docs/screenshots/      上面「界面预览」用到的截图（`node scripts/screenshot.js` 重新生成）
 Dockerfile             distroless 多阶段构建
 docker-compose.yml     推荐部署方式
 ```
@@ -1071,6 +1071,9 @@ bash scripts/e2e.sh
 
 # Docker 端到端：镜像构建、root 运行、容器健康检查、容器间转发、卷持久化
 bash scripts/e2e-docker.sh
+
+# 重新生成「界面预览」的截图：起临时实例 + 灌演示数据 + headless Chromium 截图
+node --no-warnings scripts/screenshot.js
 ```
 
 依赖只有 5 个，且都是必需的：纯 Go 的 SQLite 驱动、bcrypt、SMTP 客户端、IMAP 客户端、MIME 解析。
