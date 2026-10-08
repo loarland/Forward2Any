@@ -57,6 +57,11 @@ type Server struct {
 	// 表单值把另一次刚改的字段覆盖回去（丢更新）。配置导入整体替换，同理。
 	settingsMu sync.Mutex
 
+	// authMu 串行化「校验管理员密码 → 签发会话」和「改密 → 作废旧会话」。
+	// 不互斥的话，用旧密码验证通过的请求可能赶在改密清会话之后才签发，
+	// 于是旧密码换来的会话在改密后依然有效。
+	authMu sync.Mutex
+
 	mu   sync.Mutex
 	srv  *http.Server
 	ln   net.Listener
@@ -98,7 +103,7 @@ func (s *Server) refreshOriginPolicy() {
 	} else {
 		enabled = settings.OriginCheck
 		if u, err := url.Parse(settings.BaseURL); err == nil && u.Host != "" {
-			list = append(list, allowedOrigin{host: normalizeHost(u.Host)})
+			list = append(list, allowedOrigin{host: normalizeHost(u.Host, u.Scheme)})
 		}
 		extra, _ := parseAllowedOrigins(settings.TrustedOrigins)
 		list = append(list, extra...)
@@ -224,6 +229,10 @@ func (s *Server) listenLocked(port int) error {
 	return nil
 }
 
+// ErrRebindRollbackFailed 表示新端口没绑上、回滚旧端口也没成功。
+// 这种情况下进程可能已经没有监听器，调用方需要把这句话原样告诉管理员。
+var ErrRebindRollbackFailed = errors.New("回滚原端口也失败")
+
 // Rebind 在运行中切换监听端口；新端口绑不上就回滚到原端口。
 func (s *Server) Rebind(port int) error {
 	s.mu.Lock()
@@ -241,7 +250,8 @@ func (s *Server) Rebind(port int) error {
 
 	if err := s.listenLocked(port); err != nil {
 		if rbErr := s.listenLocked(oldPort); rbErr != nil {
-			return fmt.Errorf("%w；回滚到端口 %d 也失败: %v", err, oldPort, rbErr)
+			return fmt.Errorf("%w：新端口 %d 绑定失败（%v），回滚到 %d 也失败（%v）",
+				ErrRebindRollbackFailed, port, err, oldPort, rbErr)
 		}
 		return err
 	}

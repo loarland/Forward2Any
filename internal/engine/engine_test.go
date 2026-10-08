@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite" // 测试里要自己开一条到库文件的连接做故障注入
 
 	"github.com/loarland/Forward2Any/internal/store"
 )
@@ -973,5 +978,196 @@ func TestTemplateNowFollowsSettingsTimezone(t *testing.T) {
 	}
 	if list[0].Rendered != "CST" {
 		t.Errorf("配了 Asia/Shanghai 时 {{.Now}} 应当是 CST，实际 %q", list[0].Rendered)
+	}
+}
+
+// payload_max_bytes 只约束「原始报文」那份展示副本，不能拿去截断真正要发出去的正文：
+// 大一点的 JSON 被切一刀之后对端根本解析不了，而且发送方还以为投递成功了。
+func TestSubmitDoesNotTruncateOutboundBody(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// 把保存上限压到很小，保证它一定命中。
+	if err := st.SetSetting(store.KeyPayloadMaxBytes, "32"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "big1", HTTPMethod: "POST", Headers: "{}"}
+	for _, s := range []*store.Source{out, in} {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "转发", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID},
+		BodyTemplate: `{"msg":{{.Payload.msg | printf "%q"}}}`, HeadersTemplate: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	long := strings.Repeat("x", 500)
+	payload := []byte(`{"msg":"` + long + `"}`)
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := eng.Submit(&Inbound{
+		Source: in, Payload: payload,
+		Parsed: map[string]any{"msg": long}, TraceID: "t-big",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := st.ListDeliveries(store.DeliveryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应当只有 1 条投递，实际 %d", len(list))
+	}
+	want := `{"msg":"` + long + `"}`
+	if list[0].Rendered != want {
+		t.Errorf("出站正文被改动了：实际 %d 字节，期望 %d 字节", len(list[0].Rendered), len(want))
+	}
+	if !json.Valid([]byte(list[0].Rendered)) {
+		t.Error("出站正文应当是完整的合法 JSON")
+	}
+	// 展示用的原始报文副本仍然按上限截断。
+	if len(list[0].Payload) >= len(payload) {
+		t.Errorf("原始报文副本应当被截断，实际 %d 字节（原文 %d）", len(list[0].Payload), len(payload))
+	}
+}
+
+// 入队写不进去时必须把错误交回调用方。邮件轮询就是靠这个错误决定
+// 「不标记已读、下一轮重新取」的，吞掉它等于把这封邮件静默丢掉。
+func TestSubmitPropagatesEnqueueFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	out := &store.Source{Name: "目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:1/x", HTTPMethod: "POST", Headers: "{}"}
+	in := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "fail1", HTTPMethod: "POST", Headers: "{}"}
+	for _, s := range []*store.Source{out, in} {
+		if err := st.SaveSource(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveRule(&store.Rule{
+		Name: "转发", Enabled: true,
+		FromSourceIDs: []int64{in.ID}, ToSourceIDs: []int64{out.ID}, HeadersTemplate: "{}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 直接开一条到同一个库文件的连接，把 deliveries 表删掉，
+	// 制造「设置和规则读得到、投递写不进去」这种局面。
+	raw, err := sql.Open("sqlite", "file:"+store.DBPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`DROP TABLE deliveries`); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n, err := eng.Submit(&Inbound{Source: in, Payload: []byte(`{"a":1}`),
+		Parsed: map[string]any{"a": float64(1)}, TraceID: "t-fail"})
+	if err == nil {
+		t.Fatal("投递写不进去时 Submit 必须报错，不能当成成功")
+	}
+	if n != 0 {
+		t.Errorf("入队失败时不该报告任何已创建的投递，实际 %d", n)
+	}
+}
+
+// cleanupOnce 按保留天数删掉终态日志，未完成的投递（pending / failed）不能动，
+// 否则重试队列会被误清。
+func TestCleanupOnceKeepsUnfinished(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetSetting(store.KeyLogRetentionDays, "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSuccess := &store.Delivery{Status: store.StatusSuccess, Rendered: "旧的"}
+	oldPending := &store.Delivery{Status: store.StatusPending, Rendered: "还没投"}
+	for _, d := range []*store.Delivery{oldSuccess, oldPending} {
+		if err := st.CreateDelivery(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backdate(t, dir, oldSuccess.ID, 48*time.Hour)
+	backdate(t, dir, oldPending.ID, 48*time.Hour)
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	eng.cleanupOnce()
+
+	if _, err := st.GetDelivery(oldSuccess.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("超过保留期的成功日志应当被清掉，实际 err=%v", err)
+	}
+	if _, err := st.GetDelivery(oldPending.ID); err != nil {
+		t.Errorf("未完成的投递不该被清理：%v", err)
+	}
+}
+
+// 保留天数必须真的接上调度。以前只有清理函数和它的单测，运行时没有任何地方调用它，
+// 「每天自动清理」等于没有。
+func TestEngineStartWiresCleanup(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetSetting(store.KeyLogRetentionDays, "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	old := &store.Delivery{Status: store.StatusSuccess, Rendered: "很久以前"}
+	if err := st.CreateDelivery(old); err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, dir, old.ID, 48*time.Hour)
+
+	eng := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	eng.Start()
+	defer eng.Stop()
+
+	// janitor 在启动时就会清一次，这里只是等它跑完。
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := st.GetDelivery(old.ID); errors.Is(err, store.ErrNotFound) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Error("Engine 启动后应当清掉超过保留期的历史日志，说明清理没有接上调度")
+}
+
+// backdate 把一条投递的创建时间往前挪，用来模拟「很久以前的日志」。
+func backdate(t *testing.T, dir string, id int64, age time.Duration) {
+	t.Helper()
+	raw, err := sql.Open("sqlite", "file:"+store.DBPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`UPDATE deliveries SET created_at = ? WHERE id = ?`,
+		time.Now().Add(-age).Unix(), id); err != nil {
+		t.Fatal(err)
 	}
 }

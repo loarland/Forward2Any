@@ -196,11 +196,11 @@ func originMatches(r *http.Request, allow []allowedOrigin) bool {
 	if err != nil {
 		return false
 	}
-	host := normalizeHost(u.Host)
+	host := normalizeHost(u.Host, u.Scheme)
 	if host == "" {
 		return false
 	}
-	if host == normalizeHost(r.Host) {
+	if host == normalizeHost(r.Host, u.Scheme) {
 		return true
 	}
 	scheme := strings.ToLower(u.Scheme)
@@ -261,7 +261,7 @@ func parseAllowedOrigins(text string) (list []allowedOrigin, bad []string) {
 		if i := strings.LastIndex(rest, "@"); i >= 0 {
 			rest = rest[i+1:]
 		}
-		host := normalizeHost(rest)
+		host := normalizeHost(rest, entry.scheme)
 		if host == "" || strings.HasPrefix(host, ":") || !validHostChars(host) {
 			bad = append(bad, item)
 			continue
@@ -304,25 +304,40 @@ func validHostChars(h string) bool {
 	return true
 }
 
-// normalizeHost 归一化后再比：小写、去掉默认端口。
+// normalizeHost 归一化后再比：小写、去掉该协议下的默认端口。
 //
 // 纯写法差异不该导致拒绝：nginx 的 `proxy_set_header Host $host` 会把端口吃掉，
 // 而浏览器的 Origin 在标准端口上不带端口。非默认端口仍然要求一致 ——
 // 同一台机器上的另一个端口是另一个源，不能混为一谈。
-func normalizeHost(hostport string) string {
+//
+// 只去掉「当前协议对应的」那个默认端口：80 只在 http 下算默认，443 只在 https 下算默认。
+// 不分协议地把两个都去掉，会把 https://host:80 和 https://host:443 看成同一个源。
+// scheme 为空表示这一条不限协议（允许列表里只写主机名的条目），此时两个默认端口都去掉。
+func normalizeHost(hostport, scheme string) string {
 	hostport = strings.ToLower(strings.TrimSpace(hostport))
 	if hostport == "" {
 		return ""
 	}
-	if host, port, err := net.SplitHostPort(hostport); err == nil {
-		switch port {
-		case "80", "443", "":
-			return host
-		default:
-			return net.JoinHostPort(host, port)
-		}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return strings.TrimSuffix(hostport, ":")
 	}
-	return strings.TrimSuffix(hostport, ":")
+	if port == "" || isDefaultPort(scheme, port) {
+		return host
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// isDefaultPort 判断端口在给定协议下是不是默认端口。
+func isDefaultPort(scheme, port string) bool {
+	switch scheme {
+	case "http":
+		return port == "80"
+	case "https":
+		return port == "443"
+	default:
+		return port == "80" || port == "443"
+	}
 }
 
 // clipHeader 把请求头里的值压成适合写进错误页/日志的一行：去掉控制字符、截断。
@@ -346,20 +361,37 @@ func clipHeader(v string) string {
 //
 // 默认密码是为了「起来就能登」的便利，但一个公网可达的后台配默认密码等于敞开大门，
 // 所以用一次强制修改把这个便利限制在首次登录。
-// 设置页本身（含导出/导入）放行，否则用户没法完成改密。
+// 设置页本身放行（改密就在这一页上），但导入 / 导出要单独挡掉：导出会把所有源密钥、
+// Bot Token、邮箱密码整份带出来，导入能整体替换配置 —— 这两件事不能交给一个
+// 「密码人人知道」的会话。见 isSensitiveSettingsPath。
 func (s *Server) requirePasswordChanged(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.passIsDefault.Load() || strings.HasPrefix(r.URL.Path, "/settings") {
+		if !s.passIsDefault.Load() {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/settings")
-			w.WriteHeader(http.StatusSeeOther)
+		if isSensitiveSettingsPath(r.URL.Path) {
+			http.Error(w, "仍在使用默认密码：请先在设置页修改管理员密码，之后才能使用导入 / 导出。",
+				http.StatusForbidden)
 			return
 		}
-		http.Redirect(w, r, "/settings?ok=must_change_password", http.StatusSeeOther)
+		if !strings.HasPrefix(r.URL.Path, "/settings") {
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", "/settings")
+				w.WriteHeader(http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/settings?ok=must_change_password", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// isSensitiveSettingsPath 判断默认密码下要额外挡住的设置路由。
+// 导出会把配置里的全部凭据带出来，导入能整体替换源与规则，都不该在改密之前可用。
+func isSensitiveSettingsPath(path string) bool {
+	return path == "/settings/export" || path == "/settings/import"
 }
 
 // ---------- 登录 ----------
@@ -421,14 +453,26 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 
 	user := r.PostFormValue("username")
 	pass := r.PostFormValue("password")
-	if user != settings.AdminUser || !store.CheckPassword(settings.AdminPassHash, pass) {
+
+	// 「校验密码 → 签发会话」必须和改密互斥：否则会出现「旧密码验证通过 → 管理员改密并
+	// 清掉其他会话 → 这次登录才签发」的顺序，那个用旧密码换来的会话在改密之后依然有效。
+	// 锁内重新读一次设置，保证校验用的是最新的密码哈希。
+	s.authMu.Lock()
+	fresh, err := s.store.Settings()
+	if err != nil {
+		s.authMu.Unlock()
+		s.fail(w, "读取设置失败", err)
+		return
+	}
+	if user != fresh.AdminUser || !store.CheckPassword(fresh.AdminPassHash, pass) {
+		s.authMu.Unlock()
 		s.limiter.fail(ip)
 		s.log.Warn("登录失败", "user", user, "ip", ip)
 		s.renderLogin(w, r, "用户名或密码错误")
 		return
 	}
-
 	tok, err := s.sessions.create()
+	s.authMu.Unlock()
 	if err != nil {
 		s.fail(w, "创建会话失败", err)
 		return

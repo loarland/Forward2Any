@@ -191,6 +191,10 @@ func (p *Poller) poll(ctx context.Context, src *store.Source) {
 		case <-timer.C:
 		}
 		if err := p.cycle(ctx, src); err != nil {
+			if ctx.Err() != nil {
+				// 取消导致的失败（连接被我们自己关掉）是预期结果，别当成邮件服务器故障去告警。
+				return
+			}
 			p.log.Warn("邮件轮询失败", "源", src.Name, "err", err)
 		}
 		timer.Reset(jitter(interval))
@@ -210,14 +214,33 @@ func jitter(d time.Duration) time.Duration {
 }
 
 func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
-	c, conn, err := dial(src)
+	conn, err := connect(ctx, src)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = c.Logout()
-		_ = conn.Close()
+
+	// 取消时直接关掉连接。go-imap v1 从「读服务器问候语」到每一条命令都没有 context，
+	// 只有把连接关了，卡在读写上的调用才会立刻返回 —— 否则取消轮询、Poller.Stop()
+	// 都会一直等在 wg.Wait() 上。watcher 注册在建会话之前，问候语那一步也盖得住。
+	stopWatch := make(chan struct{})
+	defer close(stopWatch)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stopWatch:
+		}
 	}()
+
+	// 注册顺序决定执行顺序（后注册的先执行）：Logout → 关连接 → 停 watcher。
+	// 这样 watcher 在整个 Logout 期间都还守着，取消时不会卡在收尾上。
+	defer conn.Close()
+
+	c, err := login(conn, src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Logout() }()
 
 	if _, err := c.Select(src.IMAPFolder, false); err != nil {
 		return fmt.Errorf("打开邮箱 %s: %w", src.IMAPFolder, err)
@@ -239,13 +262,16 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 	seqset := new(imap.SeqSet)
 	seqset.AddNum(ids...)
 
-	section := &imap.BodySectionName{}
+	// 用 BODY.PEEK 而不是 BODY：非 PEEK 的取信会让服务端顺手把邮件标成已读，
+	// 于是解析失败、入队失败或进程退出之后这封信已经「读过」，而事件并没有落库，
+	// 下一轮只搜未读邮件就再也取不到它了。用 PEEK 取，读完仍然未读，
+	// 真正的已读标记留到确实提交成功之后再做（见本函数末尾的 UidStore）。
+	section := bodySection()
 	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchUid, section.FetchItem()}
 	ch := make(chan *imap.Message, 10)
 
-	// 给整轮操作一个总时限：go-imap v1 没有 context 支持，只能靠连接超时兜底。
-	_ = conn.SetDeadline(time.Now().Add(cycleBudget))
-
+	// 命令级超时由 dial 里设置的 client.Timeout 负责：go-imap v1 的 execute 在
+	// Timeout 为 0 时会主动清掉连接上已有的 deadline，所以在这里 conn.SetDeadline 是留不住的。
 	done := make(chan error, 1)
 	go func() { done <- c.UidFetch(seqset, items, ch) }()
 
@@ -292,14 +318,18 @@ func (p *Poller) cycle(ctx context.Context, src *store.Source) error {
 		handled = append(handled, msg.Uid)
 	}
 	if err := <-done; err != nil {
+		if ctx.Err() != nil {
+			// 关闭流程里连接是我们自己关掉的，取信失败属于预期结果，不当错误上报。
+			return nil
+		}
 		return fmt.Errorf("拉取邮件: %w", err)
 	}
 
 	if len(handled) == 0 {
 		return nil
 	}
-	// 处理成功才标记已读：失败的下轮还会被取到。
-	_ = conn.SetDeadline(time.Now().Add(cycleBudget))
+	// 处理成功才标记已读。正文是用 BODY.PEEK 取的，服务端不会替我们标，
+	// 所以「还是未读」就是真的没处理完，下一轮会重新取到。
 	seen := new(imap.SeqSet)
 	seen.AddNum(handled...)
 	op := imap.FormatFlagsOp(imap.AddFlags, true)
@@ -319,35 +349,61 @@ func drainInBackground(ch <-chan *imap.Message) {
 	}()
 }
 
-func dial(src *store.Source) (*client.Client, net.Conn, error) {
+// bodySection 是取邮件正文用的 section。
+//
+// 必须是 PEEK：不带 PEEK 的 BODY[] 会让服务端在返回正文的同时把邮件标成已读，
+// 而这时候我们还没解析、也没入库，一旦中间失败这封信就永远不会被重取。
+func bodySection() *imap.BodySectionName {
+	return &imap.BodySectionName{Peek: true}
+}
+
+// connect 建立 TCP（必要时再套 TLS）连接，并把「握手 + 等问候语」这一段也纳入超时。
+//
+// Dialer 的 Timeout 只管建连：TLS 握手和等服务器发 greeting 都可能无限期挂住。
+// 这里先用连接 deadline 兜底，握手另外受 ctx 约束；问候语那一步由调用方的
+// watcher 关连接来中断（client.New 会同步读问候语，没有 context 可用）。
+func connect(ctx context.Context, src *store.Source) (net.Conn, error) {
 	addr := net.JoinHostPort(src.IMAPHost, strconv.Itoa(src.IMAPPort))
 	d := &net.Dialer{Timeout: dialTimeout}
-	conn, err := d.Dial("tcp", addr)
+	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("连接 %s: %w", addr, err)
+		return nil, fmt.Errorf("连接 %s: %w", addr, err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(dialTimeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("设置连接超时: %w", err)
 	}
 
 	if src.IMAPTLS {
 		host, _, _ := net.SplitHostPort(addr)
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-		if err := tlsConn.Handshake(); err != nil {
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			conn.Close()
-			return nil, nil, fmt.Errorf("TLS 握手失败（若服务器用自签证书，请改用非加密端口）: %w", err)
+			return nil, fmt.Errorf("TLS 握手失败（若服务器用自签证书，请改用非加密端口）: %w", err)
 		}
 		conn = tlsConn
 	}
+	return conn, nil
+}
 
+// login 建好 IMAP 会话并登录。
+func login(conn net.Conn, src *store.Source) (*client.Client, error) {
 	c, err := client.New(conn)
 	if err != nil {
-		conn.Close()
-		return nil, nil, fmt.Errorf("初始化 IMAP 会话: %w", err)
+		// New 出错时客户端对象已经建出来了，得自己收掉，否则读循环那条协程会留着。
+		if c != nil {
+			_ = c.Close()
+		}
+		return nil, fmt.Errorf("初始化 IMAP 会话: %w", err)
 	}
+	// 每条命令的超时。必须在这里设上：go-imap v1 的 execute 在 Timeout 为 0 时
+	// 会主动把连接上已有的 deadline 清成零值，外面手动 SetDeadline 根本留不住。
+	c.Timeout = cycleBudget
 	if err := c.Login(src.IMAPUser, src.IMAPPass); err != nil {
 		c.Close()
-		conn.Close()
-		return nil, nil, fmt.Errorf("IMAP 登录失败: %w", err)
+		return nil, fmt.Errorf("IMAP 登录失败: %w", err)
 	}
-	return c, conn, nil
+	return c, nil
 }
 
 // ---------- 邮件 -> 统一载荷 ----------

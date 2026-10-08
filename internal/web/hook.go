@@ -17,8 +17,9 @@ import (
 	"github.com/loarland/Forward2Any/internal/store"
 )
 
-// maxInboundBody 是单次入站报文的内存读取上限。
-// 落库时还会按设置里的 payload_max_bytes 再截一次。
+// maxInboundBody 是单次入站报文的读取上限，超过直接返回 413。
+// 落库时「原始报文」那一份副本还会按设置里的 payload_max_bytes 再截一次，
+// 但要发出去的正文不受那个设置影响。
 const maxInboundBody = 10 << 20
 
 // registerHook 挂载接收端点。
@@ -61,8 +62,19 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxInboundBody))
+	// 用 MaxBytesReader 而不是 LimitReader：超限时要能明确报错。
+	// 静默截断会把前缀当成完整报文收下 —— JSON 解析不了、HMAC 也对不上，
+	// 发送方拿到的还是一句看不出原因的失败。
+	r.Body = http.MaxBytesReader(w, r.Body, maxInboundBody)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.log.Warn("入站报文超过上限", "源", src.Name, "上限字节", int64(maxInboundBody))
+			http.Error(w, fmt.Sprintf("请求报文超过 %d 字节上限", int64(maxInboundBody)),
+				http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "读取请求报文失败", http.StatusBadRequest)
 		return
 	}

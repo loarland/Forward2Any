@@ -161,16 +161,25 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("管理员密码已更新", "用户", next.AdminUser)
 	}
 
+	// 改密这一段和登录时的「校验密码 → 签发会话」互斥：不然旧密码可能在校验通过之后、
+	// 会话签发之前被改掉，那个用旧密码换来的会话在改密后照样有效。
 	oldPort := s.Port()
-	if err := s.store.SaveSettings(&next); err != nil {
-		s.fail(w, "保存设置失败", err)
-		return
-	}
 	if passwordChanged {
-		// 改完密码后台就该解锁，不必等重启。
-		s.refreshPassFlag()
-		// 旧密码签发的会话一并作废，当前这台留着继续用。
-		s.sessions.destroyOthers(sessionToken(r))
+		s.authMu.Lock()
+	}
+	saveErr := s.store.SaveSettings(&next)
+	if passwordChanged {
+		if saveErr == nil {
+			// 改完密码后台就该解锁，不必等重启。
+			s.refreshPassFlag()
+			// 旧密码签发的会话一并作废，当前这台留着继续用。
+			s.sessions.destroyOthers(sessionToken(r))
+		}
+		s.authMu.Unlock()
+	}
+	if saveErr != nil {
+		s.fail(w, "保存设置失败", saveErr)
+		return
 	}
 	// 换配色/亮暗同样立刻生效，不用重启进程。
 	s.refreshTheme()
@@ -187,9 +196,18 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// 在处理器里直接 Shutdown 会等待当前请求结束 —— 那就是自己等自己。
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			if err := s.Rebind(next.WebPort); err != nil {
-				s.log.Error("切换监听端口失败，已在原端口继续运行", "err", err)
+			err := s.Rebind(next.WebPort)
+			if err == nil {
+				return
 			}
+			// 绑不上就把库里的端口改回去：否则库里写着新端口、服务其实还在旧端口上，
+			// 健康检查和下次启动都会照着错的那个探。
+			s.rollbackPortSetting(oldPort, next.WebPort)
+			if errors.Is(err, ErrRebindRollbackFailed) {
+				s.log.Error("切换监听端口失败，且回滚原端口也失败：当前可能已无监听器", "err", err)
+				return
+			}
+			s.log.Error("切换监听端口失败，已在原端口继续运行", "err", err)
 		}()
 		s.renderSettings(w, r, "", fmt.Sprintf(
 			"设置已保存。监听端口正在从 %d 切换到 %d，请稍后用新端口访问。"+
@@ -201,6 +219,29 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/settings?ok=saved", http.StatusSeeOther)
+}
+
+// rollbackPortSetting 在切换端口失败后，把数据库里的监听端口改回旧值。
+//
+// 只有「库里仍然是我们刚写进去的那个失败端口」时才回滚：这中间管理员可能已经又改了
+// 一次端口，不能把人家新的设置覆盖掉。
+func (s *Server) rollbackPortSetting(oldPort, failedPort int) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+
+	current, err := s.store.Settings()
+	if err != nil {
+		s.log.Error("回滚监听端口失败：读取设置出错", "err", err)
+		return
+	}
+	if current.WebPort != failedPort {
+		return
+	}
+	if err := s.store.SetSetting(store.KeyWebPort, strconv.Itoa(oldPort)); err != nil {
+		s.log.Error("回滚监听端口失败", "err", err)
+		return
+	}
+	s.log.Warn("监听端口已回滚为原值", "端口", oldPort)
 }
 
 func validateSettings(v *store.Settings) error {
@@ -448,7 +489,8 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.ReplaceConfig(sources, rules, kv); err != nil {
+	aborted, err := s.store.ReplaceConfig(sources, rules, kv)
+	if err != nil {
 		s.fail(w, "导入失败", err)
 		return
 	}
@@ -457,7 +499,16 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	if len(kv) > 0 {
 		s.refreshOriginPolicy()
 	}
-	s.log.Info("导入配置完成", "源", len(sources), "规则", len(rules), "设置", len(kv))
+	s.log.Info("导入配置完成", "源", len(sources), "规则", len(rules), "设置", len(kv),
+		"终止的未完成投递", aborted)
+	if aborted > 0 {
+		// 源被整体重建之后，旧投递的 out_source_id 已经指不到任何目标，只能终止。
+		// 这件事必须当场说清楚，不能让管理员过一阵子才在日志里看到一堆 dead。
+		s.renderSettings(w, r, "", fmt.Sprintf(
+			"导入完成。有 %d 条还没投完的记录因为目标源被整体替换而终止，可在投递日志里按 dead 状态查看。",
+			aborted))
+		return
+	}
 	http.Redirect(w, r, "/settings?ok=imported", http.StatusSeeOther)
 }
 

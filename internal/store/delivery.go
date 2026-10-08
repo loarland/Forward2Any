@@ -71,9 +71,41 @@ func scanDelivery(sc interface{ Scan(...any) error }) (*Delivery, error) {
 }
 
 func (s *Store) CreateDelivery(d *Delivery) error {
+	return createDelivery(s.db, d)
+}
+
+// CreateDeliveries 在同一个事务里插入一批投递记录。
+//
+// 一次入站事件展开出的所有目标要么全部入队，要么一条都不留。只写进去一部分的话，
+// 调用方既不能算成功（没写进去的目标会永久收不到），也不能让上游重试
+// （已经入队的目标会被重复投递一次）。
+func (s *Store) CreateDeliveries(list []*Delivery) error {
+	if len(list) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("开始入队事务: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, d := range list {
+		if err := createDelivery(tx, d); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交入队事务: %w", err)
+	}
+	return nil
+}
+
+// createDelivery 是插入语句的实现，跟着调用方的事务走：
+// 单条插入和一次事件的批量入队共用它。
+func createDelivery(db execer, d *Delivery) error {
 	d.CreatedAt = nowUnix()
 	d.UpdatedAt = d.CreatedAt
-	res, err := s.db.Exec(`INSERT INTO deliveries (
+	res, err := db.Exec(`INSERT INTO deliveries (
 		trace_id, rule_id, in_source_id, out_source_id, hop_chain, status, attempt,
 		payload, rendered, subject, req_headers, response_code, response_body, last_error, next_retry_at,
 		created_at, updated_at

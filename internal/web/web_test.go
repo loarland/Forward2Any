@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loarland/Forward2Any/internal/engine"
 	"github.com/loarland/Forward2Any/internal/store"
 	"github.com/loarland/Forward2Any/internal/web/ui"
 )
@@ -607,20 +608,49 @@ func TestParseAllowedOrigins(t *testing.T) {
 }
 
 func TestNormalizeHost(t *testing.T) {
-	cases := map[string]string{
-		"Example.COM":      "example.com",
-		"example.com:443":  "example.com",
-		"example.com:80":   "example.com",
-		"example.com:8443": "example.com:8443",
-		" 1.2.3.4:16000 ":  "1.2.3.4:16000",
-		"[::1]:16000":      "[::1]:16000",
-		"":                 "",
+	cases := []struct {
+		in, scheme, want string
+	}{
+		{"Example.COM", "", "example.com"},
+		// 默认端口只在对应协议下才算默认。
+		{"example.com:443", "https", "example.com"},
+		{"example.com:80", "http", "example.com"},
+		{"example.com:80", "https", "example.com:80"},
+		{"example.com:443", "http", "example.com:443"},
+		// 不限协议的条目（允许列表里只写主机名）两个默认端口都去掉。
+		{"example.com:443", "", "example.com"},
+		{"example.com:80", "", "example.com"},
+		{"example.com:8443", "", "example.com:8443"},
+		{"example.com:8443", "http", "example.com:8443"},
+		{" 1.2.3.4:16000 ", "", "1.2.3.4:16000"},
+		{"[::1]:16000", "", "[::1]:16000"},
+		{"", "", ""},
 	}
-	for in, want := range cases {
-		if got := normalizeHost(in); got != want {
-			t.Errorf("normalizeHost(%q) = %q，期望 %q", in, got, want)
+	for _, c := range cases {
+		if got := normalizeHost(c.in, c.scheme); got != c.want {
+			t.Errorf("normalizeHost(%q, %q) = %q，期望 %q", c.in, c.scheme, got, c.want)
 		}
 	}
+}
+
+// 80 和 443 只在各自的协议下算默认端口。不分协议地把两个都归一化掉，
+// 会把 https://host:80 和 https://host:443 当成同一个源。
+func TestOriginDoesNotConflateDefaultPortsAcrossSchemes(t *testing.T) {
+	if originMatches(originRequest("POST", "example.com", "https://example.com:80"), nil) {
+		t.Error("https 下的 :80 不是默认端口，不该和 :443 视为同源")
+	}
+	if !originMatches(originRequest("POST", "example.com:443", "https://example.com"), nil) {
+		t.Error("https 下 :443 与不带端口应当视为同一个源")
+	}
+}
+
+// originRequest 拼一个带 Origin 的写请求，host 是「本服务看到的地址」。
+func originRequest(method, host, origin string) *http.Request {
+	r := httptest.NewRequest(method, "http://"+host+"/login", nil)
+	if origin != "" {
+		r.Header.Set("Origin", origin)
+	}
+	return r
 }
 
 // 端到端一点：guard 在「开关 + 允许列表」下的行为。
@@ -2995,5 +3025,277 @@ func TestImportPlacesSourcesByIndex(t *testing.T) {
 	}
 	if rules[0].ToSourceIDs[0] != byName["出口"] {
 		t.Errorf("目标源指错了：%v（出口=%d）", rules[0].ToSourceIDs, byName["出口"])
+	}
+}
+
+// ---------- 默认密码下的权限收紧 ----------
+
+// 默认密码是为了「起来就能登」，但导出会把所有源密钥、Bot Token、邮箱密码整份带走，
+// 导入能整体替换配置 —— 这两件事不能交给一个「密码人人知道」的会话。
+// 改密本身仍然要能走，否则用户被自己锁在门外。
+func TestDefaultPasswordBlocksImportExport(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// 不给密码 → 用默认密码，passIsDefault 为真。
+	if _, err := st.Bootstrap(store.BootstrapInput{
+		Port: 16000, AdminUser: "admin", BaseURL: "http://localhost:16000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	s.refreshPassFlag()
+	if !s.passIsDefault.Load() {
+		t.Fatal("测试前提：应当处于默认密码状态")
+	}
+
+	next := s.requirePasswordChanged(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{"/settings/export", "/settings/import"} {
+		rec := httptest.NewRecorder()
+		next.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("默认密码下 %s 应当被拒（403），实际 %d", path, rec.Code)
+		}
+	}
+
+	// 设置页本身必须放行，改密就在这一页上。
+	rec := httptest.NewRecorder()
+	next.ServeHTTP(rec, httptest.NewRequest("GET", "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("默认密码下设置页应当放行，实际 %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	next.ServeHTTP(rec, httptest.NewRequest("POST", "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("默认密码下提交改密表单应当放行，实际 %d", rec.Code)
+	}
+
+	// 其它后台页面照旧被挡回设置页。
+	rec = httptest.NewRecorder()
+	next.ServeHTTP(rec, httptest.NewRequest("GET", "/sources", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("默认密码下其它页面应当重定向到设置页，实际 %d", rec.Code)
+	}
+
+	// 改掉密码之后全部放开。
+	if err := st.SetSettings(map[string]string{store.KeyAdminPassDefault: "0"}); err != nil {
+		t.Fatal(err)
+	}
+	s.refreshPassFlag()
+	for _, path := range []string{"/settings/export", "/settings/import", "/sources"} {
+		rec := httptest.NewRecorder()
+		next.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("改密之后 %s 应当放行，实际 %d", path, rec.Code)
+		}
+	}
+}
+
+// ---------- 入站报文上限 ----------
+
+// 超限必须明确报 413，不能把前缀当成完整报文收下：静默截断会让 JSON 解析失败、
+// HMAC 也对不上，发送方拿到的失败信息完全指不到「报文太大」。
+func TestHookRejectsOversizedBody(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	src := &store.Source{Name: "入口", Kind: "webhook", Usage: "in", Enabled: true,
+		Slug: "big-hook", HTTPMethod: "POST", Headers: "{}", AuthMode: "none"}
+	if err := st.SaveSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	s.engine = engine.New(st, s.log)
+
+	call := func(size int) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/hook/"+src.Slug, strings.NewReader(strings.Repeat("x", size)))
+		req.SetPathValue("slug", src.Slug)
+		rec := httptest.NewRecorder()
+		s.handleHook(rec, req)
+		return rec
+	}
+
+	if rec := call(maxInboundBody + 1); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("超限报文应当返回 413，实际 %d（%s）", rec.Code, rec.Body.String())
+	}
+	// 刚好到上限的报文照常接收，不能把边界也一起挡掉。
+	if rec := call(maxInboundBody); rec.Code != http.StatusAccepted {
+		t.Errorf("未超限的报文应当被接收，实际 %d（%s）", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------- 端口回滚 ----------
+
+// 端口绑不上时不能只回滚监听器：库里还留着新端口的话，健康检查和下次启动
+// 都会照着那个错的端口探，而服务其实还在旧端口上。
+func TestRollbackPortSetting(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetSetting(store.KeyWebPort, "19999"); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+
+	s.rollbackPortSetting(16000, 19999)
+	got, err := st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebPort != 16000 {
+		t.Errorf("应当回滚到 16000，实际 %d", got.WebPort)
+	}
+
+	// 这中间管理员又改过一次端口的话，不能把新值覆盖掉。
+	if err := st.SetSetting(store.KeyWebPort, "17777"); err != nil {
+		t.Fatal(err)
+	}
+	s.rollbackPortSetting(16000, 19999)
+	got, err = st.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebPort != 17777 {
+		t.Errorf("库里已经不是那个失败端口了，不该覆盖，实际 %d", got.WebPort)
+	}
+}
+
+// ---------- 导入终止未完成投递 ----------
+
+// 导入整体替换源之后，旧的未完成投递已经指不到目标了。要在导入那一刻就终止，
+// 并把条数显示在页面上，而不是让管理员过几天才发现日志里一堆 dead。
+func TestImportAbortsUnfinishedDeliveriesAndReports(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := testServer()
+	s.store = st
+	s.port = 16000
+
+	out := &store.Source{Name: "出口", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://127.0.0.1:9/x", HTTPMethod: "POST", Headers: "{}"}
+	if err := st.SaveSource(out); err != nil {
+		t.Fatal(err)
+	}
+	d := &store.Delivery{OutSourceID: out.ID, Status: store.StatusPending, Rendered: "待投"}
+	if err := st.CreateDelivery(d); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleExport(rec, httptest.NewRequest("GET", "/settings/export", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("导出失败：%d", rec.Code)
+	}
+
+	// 原样导回同一个实例：源被整体重建，那条 pending 必须当场终止。
+	got := importFile(t, s, rec.Body.Bytes())
+	if got.Code != http.StatusOK {
+		t.Fatalf("有投递被终止时应当就地渲染提示，实际 %d", got.Code)
+	}
+	if !strings.Contains(got.Body.String(), "1 条") {
+		t.Errorf("页面应当说明终止了几条未完成投递：%s", got.Body.String())
+	}
+
+	after, err := st.GetDelivery(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != store.StatusDead {
+		t.Errorf("未完成投递应当被终止成 dead，实际 %q", after.Status)
+	}
+	if after.LastError == "" {
+		t.Error("终止原因应当写进 last_error")
+	}
+}
+
+// ---------- 改密与登录签发的互斥 ----------
+
+// 登录必须用锁内读到的最新密码哈希。否则会出现「旧密码验证通过 → 管理员改密并清掉
+// 其他会话 → 这次登录才签发」的顺序，那个用旧密码换来的会话在改密之后依然有效。
+//
+// 这里用锁把这个顺序强行摆出来：先占住 authMu，等登录请求撞上它，再改掉密码。
+func TestLoginRechecksPasswordUnderLock(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	oldHash, err := store.HashPassword("old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSettings(&store.Settings{
+		WebPort: 16000, AdminUser: "admin", AdminPassHash: oldHash,
+		BaseURL: "http://localhost:16000", RetryMax: 5, RetryBackoffSeconds: 10,
+		PayloadMaxBytes: 65536, LogRetentionDays: 30,
+		ThemeColor: "blue", ThemeMode: "auto", ProxyType: "none", OriginCheck: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := testServer()
+	s.store = st
+	s.sessions = newSessionStore()
+
+	login := func(pass string) *httptest.ResponseRecorder {
+		form := url.Values{"username": {"admin"}, "password": {pass}}
+		req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		s.handleLoginPost(rec, req)
+		return rec
+	}
+
+	// 占住 authMu，模拟「改密正在进行」。登录请求会在这里等。
+	s.authMu.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- login("old-password-1") }()
+
+	// 等登录请求走到 authMu 上，再把密码换掉。
+	time.Sleep(100 * time.Millisecond)
+	newHash, err := store.HashPassword("new-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSettings(map[string]string{store.KeyAdminPassHash: newHash}); err != nil {
+		t.Fatal(err)
+	}
+	s.authMu.Unlock()
+
+	rec := <-done
+	if rec.Code == http.StatusSeeOther {
+		t.Errorf("改密后用旧密码登录不该成功（Location=%q）", rec.Header().Get("Location"))
+	}
+	if n := len(s.sessions.m); n != 0 {
+		t.Errorf("失败的登录不该留下会话，实际 %d 个", n)
+	}
+
+	// 新密码照常能登。
+	rec = login("new-password-1")
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("新密码应当能登录，实际 %d", rec.Code)
+	}
+	if n := len(s.sessions.m); n != 1 {
+		t.Errorf("成功登录应当留下 1 个会话，实际 %d 个", n)
 	}
 }

@@ -23,6 +23,12 @@ const (
 	// sendLease 是一条记录在发送期间占位的时长。正常路径下发送结束就立刻写回结果，
 	// 只有进程被强杀（SIGKILL、容器被 kill）才会留下占位，等它过期后自动重投。
 	sendLease = 2 * time.Minute
+
+	// cleanupCheckEvery 是「检查该不该清理历史日志」的间隔，retentionPeriod 是实际保留周期。
+	// 两者分开是为了让进程频繁重启也能轮到清理：只按 24 小时打点的话，
+	// 每次重启都会把计时清零，清理永远等不到。
+	cleanupCheckEvery = time.Hour
+	retentionPeriod   = 24 * time.Hour
 )
 
 // Engine 负责把入站事件按规则分发出去，并异步投递、失败重试。
@@ -98,8 +104,9 @@ func (e *Engine) Start() {
 	e.running = true
 	e.mu.Unlock()
 
-	e.wg.Add(1)
+	e.wg.Add(2)
 	go e.worker()
+	go e.janitor()
 }
 
 func (e *Engine) Stop() {
@@ -142,6 +149,50 @@ func (e *Engine) worker() {
 		case <-ticker.C:
 		}
 		e.drain()
+	}
+}
+
+// janitor 按设置里的「日志保留天数」定期删除已经结束的投递日志。
+//
+// 启动时先清一次（last 为零值，time.Since 直接满足条件），之后每小时看一次够不够一天。
+// 未完成的投递（pending / failed）不归它管，由 CleanupDeliveries 自己排除。
+func (e *Engine) janitor() {
+	defer e.wg.Done()
+
+	var last time.Time
+	ticker := time.NewTicker(cleanupCheckEvery)
+	defer ticker.Stop()
+	for {
+		if time.Since(last) >= retentionPeriod {
+			e.cleanupOnce()
+			last = time.Now()
+		}
+		select {
+		case <-e.stop:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (e *Engine) cleanupOnce() {
+	settings, err := e.store.Settings()
+	if err != nil {
+		e.log.Error("读取设置失败，跳过日志清理", "err", err)
+		return
+	}
+	days := settings.LogRetentionDays
+	if days < 1 {
+		return
+	}
+	before := time.Now().Add(-time.Duration(days) * retentionPeriod).Unix()
+	n, err := e.store.CleanupDeliveries(before)
+	if err != nil {
+		e.log.Error("清理历史投递日志失败", "err", err)
+		return
+	}
+	if n > 0 {
+		e.log.Info("已清理历史投递日志", "条数", n, "保留天数", days)
 	}
 }
 
@@ -199,7 +250,8 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 	}
 	hopChain := strings.Join(append(append([]string{}, in.Hops...), in.Source.Slug), ",")
 
-	created := 0
+	// 先把这次事件要产生的投递全部算出来，最后一次性入队。见下面的 CreateDeliveries。
+	var pending []*store.Delivery
 	for _, rule := range rules {
 		if !Match(rule.Filters, in.Parsed) {
 			continue
@@ -244,30 +296,35 @@ func (e *Engine) Submit(in *Inbound) (int, error) {
 				subject = DefaultSubject(in.Source, data)
 			}
 
-			d := &store.Delivery{
+			pending = append(pending, &store.Delivery{
 				TraceID:     in.TraceID,
 				RuleID:      rule.ID,
 				InSourceID:  in.Source.ID,
 				OutSourceID: out.ID,
 				HopChain:    hopChain,
 				Status:      store.StatusPending,
-				Payload:     Truncate(string(in.Payload), settings.PayloadMaxBytes),
-				Rendered:    Truncate(body, settings.PayloadMaxBytes),
-				Subject:     subject,
-				ReqHeaders:  string(hdrsJSON),
-			}
-			if err := e.store.CreateDelivery(d); err != nil {
-				e.log.Error("写入投递记录失败", "err", err)
-				continue
-			}
-			created++
+				// Payload 只是原始报文的展示副本，按「报文保存上限」截断；
+				// Rendered 是真正要发出去的正文，绝不能截断 —— 截断会直接损坏报文，
+				// 大一点的 JSON 被切一刀之后对端根本解析不了。
+				Payload:    Truncate(string(in.Payload), settings.PayloadMaxBytes),
+				Rendered:   body,
+				Subject:    subject,
+				ReqHeaders: string(hdrsJSON),
+			})
 		}
 	}
 
-	if created > 0 {
-		e.wake()
+	if len(pending) == 0 {
+		return 0, nil
 	}
-	return created, nil
+	// 一次事件的所有目标在一个事务里入队：写不进去就整批不算数并把错误交回调用方，
+	// 由它决定是否让上游重试（邮件侧据此决定不标已读）。只写进去一部分会让两边都做不对。
+	if err := e.store.CreateDeliveries(pending); err != nil {
+		e.log.Error("写入投递记录失败", "err", err, "条数", len(pending))
+		return 0, err
+	}
+	e.wake()
+	return len(pending), nil
 }
 
 // pickTemplate 选出生效的模板：规则上填了就用规则的，留空时退回接收源上的默认模板。

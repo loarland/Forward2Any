@@ -165,7 +165,7 @@ func TestReplaceConfigRemapsSourceIndices(t *testing.T) {
 		{Name: "新规则", Enabled: true, FromSourceIDs: []int64{0}, ToSourceIDs: []int64{1}},
 		{Name: "越界引用", Enabled: true, FromSourceIDs: []int64{0}, ToSourceIDs: []int64{9}},
 	}
-	if err := st.ReplaceConfig(sources, rules, map[string]string{KeyRetryMax: "42"}); err != nil {
+	if _, err := st.ReplaceConfig(sources, rules, map[string]string{KeyRetryMax: "42"}); err != nil {
 		t.Fatal(err)
 	}
 	// 设置跟源、规则在同一个事务里落库
@@ -211,6 +211,121 @@ func TestReplaceConfigRemapsSourceIndices(t *testing.T) {
 	}
 	if len(found) != 2 {
 		t.Errorf("按源查规则应返回 2 条，得到 %d", len(found))
+	}
+}
+
+// 导入整体替换源之后，旧的未完成投递已经指不到任何目标，不可能再发出去。
+// 必须在导入事务里当场终止并写明原因，而不是让它们躺在 pending 里，
+// 等到某次重试才变成一句「目标源已不存在」。
+func TestReplaceConfigAbortsUnfinishedDeliveries(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	old := &Source{Name: "旧目标", Kind: "webhook", Usage: "out", Enabled: true,
+		URL: "http://x", Headers: "{}", HTTPMethod: "POST"}
+	if err := st.SaveSource(old); err != nil {
+		t.Fatal(err)
+	}
+	pending := &Delivery{OutSourceID: old.ID, Status: StatusPending, Rendered: "待投"}
+	failed := &Delivery{OutSourceID: old.ID, Status: StatusFailed, Rendered: "等重试"}
+	done := &Delivery{OutSourceID: old.ID, Status: StatusSuccess, Rendered: "已投"}
+	for _, d := range []*Delivery{pending, failed, done} {
+		if err := st.CreateDelivery(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	aborted, err := st.ReplaceConfig(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aborted != 2 {
+		t.Errorf("应当终止 2 条未完成投递，实际 %d", aborted)
+	}
+
+	got, err := st.GetDelivery(pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusDead {
+		t.Errorf("未完成的投递应当变成 dead，实际 %q", got.Status)
+	}
+	if got.LastError == "" {
+		t.Error("终止原因应当写进 last_error")
+	}
+	if got.NextRetryAt != 0 {
+		t.Errorf("终止后不该再留着重试时间，实际 %d", got.NextRetryAt)
+	}
+
+	// 已经投完的是历史记录，不该被改写。
+	kept, err := st.GetDelivery(done.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Status != StatusSuccess {
+		t.Errorf("已成功的记录不该被改状态，实际 %q", kept.Status)
+	}
+
+	// 终止过的记录不会被重试队列再取出来。
+	due, err := st.DueDeliveries(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Errorf("终止后的记录不该出现在待投递队列里，实际 %d 条", len(due))
+	}
+}
+
+// 一次事件的多个目标走同一个事务入队，每条都要拿到自己的 id。
+func TestCreateDeliveriesBatch(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	list := []*Delivery{
+		{Status: StatusPending, Rendered: "一"},
+		{Status: StatusPending, Rendered: "二"},
+		{Status: StatusPending, Rendered: "三"},
+	}
+	if err := st.CreateDeliveries(list); err != nil {
+		t.Fatal(err)
+	}
+	for i, d := range list {
+		if d.ID == 0 {
+			t.Errorf("第 %d 条没有拿到 id", i)
+		}
+	}
+	got, err := st.ListDeliveries(DeliveryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Errorf("应当写入 3 条，实际 %d", len(got))
+	}
+
+	// 空批次是空操作，不该报错。
+	if err := st.CreateDeliveries(nil); err != nil {
+		t.Errorf("空批次不该报错：%v", err)
+	}
+}
+
+// 库不可用时入队必须报错：调用方（转发引擎、邮件轮询）就是靠这个错误
+// 决定「不把这次事件当成功」的。
+func TestCreateDeliveriesReportsClosedStore(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateDeliveries([]*Delivery{{Status: StatusPending}}); err == nil {
+		t.Error("库已关闭时入队应当报错，不能静默成功")
 	}
 }
 
