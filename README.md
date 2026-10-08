@@ -169,7 +169,7 @@ docker run -d --name forward2any --restart unless-stopped \
 | --- | --- |
 | `latest` | **最新发布的版本**，只在打版本标签时更新 |
 | `main` | main 分支上最后一个提交的构建（可能包含没发布的改动） |
-| `1.0.12` | 打了 `v1.0.12` 这样的标签时产生，每个版本一个标签 |
+| `1.0.13` | 打了 `v1.0.13` 这样的标签时产生，每个版本一个标签 |
 | `sha-291a555` | 对应某一次提交，想固定到某个具体构建就用它 |
 
 需要本地从源码构建时，把 compose 里的 `image:` 行换成 `build: .`。
@@ -254,7 +254,7 @@ F2A_ADMIN_PASSWORD="$(openssl rand -base64 18)" ./f2a
 每个发布包（`forward2any_<版本>_linux_<架构>.tar.gz`）包含二进制、systemd 单元和 LICENSE：
 
 ```bash
-ver=1.0.12       # 按需替换为实际版本；amd64 / arm64 按机器架构选择
+ver=1.0.13       # 按需替换为实际版本；amd64 / arm64 按机器架构选择
 base="https://github.com/loarland/Forward2Any/releases/download/v${ver}"
 curl -fsSLO "${base}/forward2any_${ver}_linux_amd64.tar.gz"
 curl -fsSLO "${base}/checksums.txt"
@@ -871,7 +871,7 @@ docker run -d --name forward2any --restart unless-stopped \
 ```
 
 使用 compose 时一条命令即可：`docker compose pull && docker compose up -d`。
-需要固定版本时，把 `latest` 换成 `1.0.12` 或 `sha-291a555` 这类标签，升级时再手动修改。
+需要固定版本时，把 `latest` 换成 `1.0.13` 或 `sha-291a555` 这类标签，升级时再手动修改。
 
 **从源码构建**：拉取新代码后重新构建：
 
