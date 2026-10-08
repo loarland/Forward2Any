@@ -43,15 +43,12 @@
 {{if .Nav}}
 <header class="topbar">
   {{/* 品牌区：名字 + 版本号 + GitHub 入口。版本号由 web.New 注入（编译时写进二进制，
-       发布版是 v1.0.14、main 构建是 sha-xxxxxxx）；GitHub 图标指向仓库，
+       发布版是 v1.0.15、main 构建是 sha-xxxxxxx）；GitHub 图标指向仓库，
        提 issue 或对着 Release 排查时都要先找到它。 */}}
   <div class="brand-group">
     <a class="brand" href="/">Forward2Any</a>
     <span class="ver" title="当前版本">{{.Version}}</span>
-    <a class="repo" href="https://github.com/loarland/Forward2Any" target="_blank" rel="noopener noreferrer"
-       title="GitHub 项目" aria-label="GitHub 项目">
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-    </a>
+    {{template "repo-link"}}
   </div>
   <nav>
     <a href="/" class="{{if eq .Nav "dashboard"}}active{{end}}">概览</a>
@@ -85,6 +82,15 @@
   <button class="toast-close" type="button" data-toast-close aria-label="关闭提示" title="关闭">×</button>
 </div>{{end}}
 {{template "content" .}}
+{{if not .Nav}}
+{{/* 没有顶栏的页面（登录页）单独放一行：版本号 + 仓库入口。
+     还没登录时最常要确认的就是「跑的是哪一版、去哪提 issue」，
+     而这两样东西恰好都在顶栏里 —— 登录页没有顶栏，所以在这里补一份。 */}}
+<footer class="login-foot">
+  <span class="ver" title="当前版本">{{.Version}}</span>
+  {{template "repo-link"}}
+</footer>
+{{end}}
 </main>
 <script>(function () {
   var el = document.documentElement;
@@ -105,6 +111,9 @@
 </body>
 </html>
 {{end}}
+
+{{/* GitHub 仓库入口。顶栏与登录页页脚共用一份 —— 图标路径改一次就够。 */}}
+{{define "repo-link"}}<a class="repo" href="https://github.com/loarland/Forward2Any" target="_blank" rel="noopener noreferrer" title="GitHub 项目" aria-label="GitHub 项目"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>{{end}}
 
 {{/* 密码框（input type=password）后面都跟这个按钮：明文 / 密文之间切换。
 

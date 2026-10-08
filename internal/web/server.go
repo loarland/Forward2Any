@@ -46,7 +46,7 @@ type Server struct {
 	// 每个请求都要判一次直连地址，同样不能每次查库。
 	trustedProxies atomic.Value
 
-	// version 是编译时注入的版本号（发布版形如 1.0.14，main 构建是 sha-xxxxxxx，
+	// version 是编译时注入的版本号（发布版形如 1.0.15，main 构建是 sha-xxxxxxx，
 	// 本地直接编译是 dev）。只在顶栏显示，用来对着 Release / 日志排查，
 	// 启动后就固定，不存在并发写。
 	version string
@@ -308,7 +308,7 @@ var flashMessages = map[string]string{
 
 // versionLabel 给顶栏显示的版本号补上 v 前缀。
 //
-// 发布版是纯数字（1.0.14），加个 v 才像版本号；main 构建是 sha-xxxxxxx、
+// 发布版是纯数字（1.0.15），加个 v 才像版本号；main 构建是 sha-xxxxxxx、
 // 本地直接编译是 dev，这两种原样显示，硬加 v 反而看不懂。
 func versionLabel(v string) string {
 	if v == "" {

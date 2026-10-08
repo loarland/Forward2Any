@@ -288,28 +288,29 @@ a:hover { text-decoration: underline; }
   letter-spacing: .3px;
 }
 .topbar .brand:hover { text-decoration: none; }
-/* 版本号：跟品牌名同一组，但压得比它轻，别抢名字的注意力。
-   等宽字体是为了 sha-xxxxxxx 这类版本号里的字母数字对齐。 */
-.topbar .ver {
+/* 版本号药丸与仓库入口：顶栏和登录页页脚共用同一套结构，只有颜色不同 ——
+   顶栏是深色底、用反色令牌，登录页是普通底色、用普通令牌。
+   版本号压得比品牌名轻，别抢名字的注意力；等宽字体是为了
+   sha-xxxxxxx 这类版本号里的字母数字对齐。 */
+.ver {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11.5px;
   line-height: 1;
-  color: var(--invert-soft);
-  background: var(--invert-hover);
-  border: 1px solid var(--invert-line);
   border-radius: 999px;
   padding: 3px 8px;
   white-space: nowrap;
 }
-.topbar .repo {
+.repo {
   display: inline-flex;
   align-items: center;
-  color: var(--invert-muted);
   padding: 5px;
   border-radius: 6px;
 }
+.repo svg { display: block; }
+
+.topbar .ver { color: var(--invert-soft); background: var(--invert-hover); border: 1px solid var(--invert-line); }
+.topbar .repo { color: var(--invert-muted); }
 .topbar .repo:hover { background: var(--invert-hover); color: var(--invert-text); text-decoration: none; }
-.topbar .repo svg { display: block; }
 .topbar nav { display: flex; gap: 4px; flex: 1; }
 .topbar nav a {
   color: var(--invert-muted);
@@ -725,6 +726,19 @@ html:not(.js) [data-pw-toggle] { display: none; }
 .login-card h1 { font-size: 19px; margin: 0 0 4px; }
 .login-card .muted { margin: 0 0 20px; font-size: 13px; }
 .login-card button { width: 100%; margin-top: 4px; }
+
+/* 登录页页脚：版本号 + 仓库入口。这一页没有顶栏，靠它看出跑的是哪一版。
+   卡片是 --panel 底、页面是 --bg，所以药丸用 --panel 正好浮出一层。 */
+.login-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.login-foot .ver { color: var(--muted); background: var(--panel); border: 1px solid var(--line); }
+.login-foot .repo { color: var(--muted); }
+.login-foot .repo:hover { background: var(--surface-3); color: var(--text); text-decoration: none; }
 
 /* ---------- 列表底部的翻页条 ----------
    三个列表页共用一套外观：每页条数、« ‹ 当前页 › »、跳转框。

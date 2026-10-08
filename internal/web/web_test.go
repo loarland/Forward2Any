@@ -1054,7 +1054,7 @@ func TestTopbarShowsVersionAndRepoLink(t *testing.T) {
 		version string
 		want    string
 	}{
-		{"1.0.14", "v1.0.14"},          // 发布版：纯数字，补 v 前缀
+		{"1.0.15", "v1.0.15"},          // 发布版：纯数字，补 v 前缀
 		{"sha-a4c8a75", "sha-a4c8a75"}, // main 分支构建：原样显示
 		{"", "dev"},                    // 本地直接编译：也不能是空白
 	}
@@ -1079,14 +1079,24 @@ func TestTopbarShowsVersionAndRepoLink(t *testing.T) {
 	}
 }
 
-// 没有 Nav 的页面（登录页）不该出现顶栏，也就不该出现版本号。
-func TestLoginPageHasNoTopbar(t *testing.T) {
+// 登录页没有顶栏（导航要登录后才有意义），但版本号与仓库入口要有 ——
+// 还没登录时最常要确认的就是「跑的是哪一版、去哪提 issue」，而这两样
+// 恰好都挂在顶栏上，登录页看不到顶栏，所以单独补了一个页脚。
+func TestLoginPageHasVersionAndRepoButNoTopbar(t *testing.T) {
 	s := testServer()
-	s.version = "1.0.14"
+	s.version = "1.0.15"
 	rec := httptest.NewRecorder()
 	s.render(rec, httptest.NewRequest("GET", "/login", nil), "login", nil)
-	if strings.Contains(rec.Body.String(), `class="ver"`) {
-		t.Error("登录页不该渲染顶栏的版本号")
+	body := rec.Body.String()
+
+	if strings.Contains(body, `class="topbar"`) {
+		t.Error("登录页不该渲染顶栏")
+	}
+	if !strings.Contains(body, ">v1.0.15<") {
+		t.Error("登录页应当显示版本号")
+	}
+	if !strings.Contains(body, `href="https://github.com/loarland/Forward2Any"`) {
+		t.Error("登录页应当有 GitHub 入口")
 	}
 }
 
