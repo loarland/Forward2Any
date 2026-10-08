@@ -280,6 +280,7 @@ a:hover { text-decoration: underline; }
   padding: 0 20px;
   height: 52px;
 }
+.topbar .brand-group { display: flex; align-items: center; gap: 10px; }
 .topbar .brand {
   font-weight: 600;
   font-size: 15px;
@@ -287,6 +288,28 @@ a:hover { text-decoration: underline; }
   letter-spacing: .3px;
 }
 .topbar .brand:hover { text-decoration: none; }
+/* 版本号：跟品牌名同一组，但压得比它轻，别抢名字的注意力。
+   等宽字体是为了 sha-xxxxxxx 这类版本号里的字母数字对齐。 */
+.topbar .ver {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--invert-soft);
+  background: var(--invert-hover);
+  border: 1px solid var(--invert-line);
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.topbar .repo {
+  display: inline-flex;
+  align-items: center;
+  color: var(--invert-muted);
+  padding: 5px;
+  border-radius: 6px;
+}
+.topbar .repo:hover { background: var(--invert-hover); color: var(--invert-text); text-decoration: none; }
+.topbar .repo svg { display: block; }
 .topbar nav { display: flex; gap: 4px; flex: 1; }
 .topbar nav a {
   color: var(--invert-muted);
@@ -298,6 +321,20 @@ a:hover { text-decoration: underline; }
 .topbar nav a.active { background: var(--accent); color: var(--on-accent); }
 .topbar .logout { margin: 0; }
 
+/* 窄屏顶栏换成两行：第一行品牌 + 版本号 + GitHub + 退出，第二行整行导航。
+   原来是一行不换行的 flex，导航被挤到折行之后仍然撑在 52px 的固定高度里，
+   直接压在内容上，最右边的「退出」还会被推出屏幕。
+   导航那一行留着 overflow-x：320px 这类更窄的屏上五个入口排不下时可以横滑，
+   不至于把最后一项切掉。第一行四项加起来约 270px，320px 屏也放得下，
+   所以版本号在窄屏保留 —— 排查问题时最常要看的就是「跑的是哪一版」。 */
+@media (max-width: 720px) {
+  .topbar { height: auto; flex-wrap: wrap; gap: 0 12px; padding: 0 14px; }
+  .topbar .brand-group { order: 1; padding: 11px 0; }
+  .topbar .logout { order: 2; margin-left: auto; }
+  .topbar nav { order: 3; flex: 1 1 100%; gap: 2px; overflow-x: auto; padding-bottom: 8px; }
+  .topbar nav a { white-space: nowrap; padding: 6px 10px; }
+}
+
 /* ---------- 布局 ---------- */
 /* 内容宽度不跟着「有没有滚动条」变：列表筛掉几行、展开一个 curl 示例、删掉一张卡片
    都可能跨过那条线，经典滚动条会占走 15px，居中的 main 随之横移 7.5px —— 看着就是「抖一下」。
@@ -306,6 +343,12 @@ a:hover { text-decoration: underline; }
 html { overflow-y: scroll; }
 main { padding: 24px; max-width: 1180px; margin: 0 auto; }
 main.narrow { max-width: 380px; padding-top: 12vh; }
+/* 窄屏把留白收窄：24px 的左右内边距在 390px 的屏上要吃掉 48px，
+   面板再各自内缩 18px，正文只剩三百出头。 */
+@media (max-width: 720px) {
+  main { padding: 16px 14px 28px; }
+  .panel { padding: 14px; }
+}
 
 .page-head {
   display: flex;
@@ -355,6 +398,29 @@ tbody tr:hover { background: var(--row-hover); }
 td.nowrap, th.nowrap { white-space: nowrap; }
 td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
 .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+
+/* ---------- 窄屏表格横向滚动 ----------
+   列表页的表格有 7–9 列，窄屏上继续 width:100% 硬挤的话，列会窄到一个汉字一行
+   （「构建结果转发」竖成一列）。窄屏下套一层滚动容器，给表格一个宽度下限，
+   装不下就横滑。780px 不是拍的：浏览器里实测过三张表的自然宽度 —— 概览 632、
+   投递日志 712、规则 761（规则那张带「编辑 / 删除」两个按钮，最宽）。必须比
+   761 留出余量：卡在 760 时只差 1px，浏览器就从「规则名」那列抠，名字会折成
+   两行（实测踩过）。
+
+   这两条必须关在媒体查询里。overflow 只要不是 visible，容器就形成 BFC，表格自带
+   的 margin-bottom 会被关在容器内、不再与后面翻页条的上边距折叠，桌面上凭空多出
+   14px（实测 18px 的间距变成 32px）。宽屏下容器就是个普通 block，外边距照旧折叠，
+   与改动前逐像素一致。 */
+@media (max-width: 720px) {
+  .table-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+  .table-scroll > table { min-width: 780px; }
+
+  /* 长 token（模板语法、URL、追踪号）在窄屏必须能断行。表格不会缩到 min-content
+     以下，一个不可断的 token 就能把整张表撑出容器 —— 规则编辑页的变量说明表和
+     投递详情页的信息表就是这么溢出的（390px 溢出 4px / 320px 溢出 21px）。
+     宽屏空间够，不需要也不该动，所以关在这里面。 */
+  .note, .kv td { overflow-wrap: anywhere; }
+}
 
 /* ---------- 表单 ---------- */
 label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--text); }

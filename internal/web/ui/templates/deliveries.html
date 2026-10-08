@@ -44,36 +44,38 @@
   {{if .HasFilter}}没有符合条件的记录。<a href="/deliveries">清除筛选</a>看全部。{{else}}还没有投递记录。{{end}}
 </div></div>
 {{else}}
-<table class="panel">
-  <thead>
-    <tr>
-      <th class="nowrap">时间</th>
-      <th>规则</th>
-      <th>接收源</th>
-      <th></th>
-      <th>目标源</th>
-      <th class="nowrap">状态</th>
-      <th class="nowrap">响应</th>
-      <th class="nowrap">次数</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Items}}
-    <tr>
-      <td class="nowrap mono">{{ts .CreatedAt}}</td>
-      <td>{{if .RuleName}}{{.RuleName}}{{else}}—{{end}}</td>
-      <td>{{if .InSourceName}}{{.InSourceName}}{{else}}—{{end}}</td>
-      <td class="muted">→</td>
-      <td>{{if .OutSourceName}}{{.OutSourceName}}{{else}}—{{end}}</td>
-      <td><span class="tag {{.Status}}">{{statusText .Status}}</span></td>
-      <td class="nowrap mono">{{if .ResponseCode}}{{.ResponseCode}}{{else}}—{{end}}</td>
-      <td class="nowrap mono">{{.Attempt}}</td>
-      <td class="nowrap"><a href="/deliveries/{{.ID}}">详情</a></td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+<div class="table-scroll">
+  <table class="panel">
+    <thead>
+      <tr>
+        <th class="nowrap">时间</th>
+        <th>规则</th>
+        <th>接收源</th>
+        <th></th>
+        <th>目标源</th>
+        <th class="nowrap">状态</th>
+        <th class="nowrap">响应</th>
+        <th class="nowrap">次数</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Items}}
+      <tr>
+        <td class="nowrap mono">{{ts .CreatedAt}}</td>
+        <td>{{if .RuleName}}{{.RuleName}}{{else}}—{{end}}</td>
+        <td>{{if .InSourceName}}{{.InSourceName}}{{else}}—{{end}}</td>
+        <td class="muted">→</td>
+        <td>{{if .OutSourceName}}{{.OutSourceName}}{{else}}—{{end}}</td>
+        <td><span class="tag {{.Status}}">{{statusText .Status}}</span></td>
+        <td class="nowrap mono">{{if .ResponseCode}}{{.ResponseCode}}{{else}}—{{end}}</td>
+        <td class="nowrap mono">{{.Attempt}}</td>
+        <td class="nowrap"><a href="/deliveries/{{.ID}}">详情</a></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 
 {{/* 投递日志的翻页在服务端做：记录会一直涨，链接必须是真链接（能收藏、能分享、没 JS 也能用）。
      整个翻页条是一个 GET 表单，筛选条件用隐藏项带过去 —— 翻页时筛选不会丢。

@@ -40,40 +40,42 @@
 
 <div class="panel" data-lf-empty hidden><div class="empty">没有匹配的规则，换个关键词或者清除筛选。</div></div>
 
-<table class="panel">
-  <thead>
-    <tr>
-      <th>名称</th>
-      <th>接收源</th>
-      <th></th>
-      <th>目标源</th>
-      <th class="nowrap">过滤条件</th>
-      <th class="nowrap">状态</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Rows}}
-    <tr data-row
-        data-enabled="{{if .Rule.Enabled}}1{{else}}0{{end}}"
-        data-filters="{{if .Rule.Filters}}1{{else}}0{{end}}"
-        data-search="{{.Rule.Name}} {{join .From " "}} {{join .To " "}}">
-      <td><a href="/rules/{{.Rule.ID}}/edit">{{.Rule.Name}}</a></td>
-      <td>{{range $i, $n := .From}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
-      <td class="muted">→</td>
-      <td>{{range $i, $n := .To}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
-      <td class="nowrap">{{len .Rule.Filters}} 条</td>
-      <td><span class="tag {{if .Rule.Enabled}}on{{else}}off{{end}}">{{if .Rule.Enabled}}启用{{else}}停用{{end}}</span></td>
-      <td class="nowrap">
-        <a class="btn sm" href="/rules/{{.Rule.ID}}/edit">编辑</a>
-        <form method="post" action="/rules/{{.Rule.ID}}/delete" style="display:inline">
-          <button class="sm danger" type="submit" hx-confirm="确定删除规则「{{.Rule.Name}}」吗？">删除</button>
-        </form>
-      </td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+<div class="table-scroll">
+  <table class="panel">
+    <thead>
+      <tr>
+        <th>名称</th>
+        <th>接收源</th>
+        <th></th>
+        <th>目标源</th>
+        <th class="nowrap">过滤条件</th>
+        <th class="nowrap">状态</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr data-row
+          data-enabled="{{if .Rule.Enabled}}1{{else}}0{{end}}"
+          data-filters="{{if .Rule.Filters}}1{{else}}0{{end}}"
+          data-search="{{.Rule.Name}} {{join .From " "}} {{join .To " "}}">
+        <td><a href="/rules/{{.Rule.ID}}/edit">{{.Rule.Name}}</a></td>
+        <td>{{range $i, $n := .From}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
+        <td class="muted">→</td>
+        <td>{{range $i, $n := .To}}{{if $i}}、{{end}}{{$n}}{{end}}</td>
+        <td class="nowrap">{{len .Rule.Filters}} 条</td>
+        <td><span class="tag {{if .Rule.Enabled}}on{{else}}off{{end}}">{{if .Rule.Enabled}}启用{{else}}停用{{end}}</span></td>
+        <td class="nowrap">
+          <a class="btn sm" href="/rules/{{.Rule.ID}}/edit">编辑</a>
+          <form method="post" action="/rules/{{.Rule.ID}}/delete" style="display:inline">
+            <button class="sm danger" type="submit" hx-confirm="确定删除规则「{{.Rule.Name}}」吗？">删除</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 
 {{template "pager-client" .}}
 {{end}}

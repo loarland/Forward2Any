@@ -147,7 +147,7 @@ func run() error {
 	poller.Start()
 	defer poller.Stop()
 
-	srv := web.New(st, log, eng, poller)
+	srv := web.New(st, log, eng, poller, version)
 	if err := srv.Start(settings.WebPort); err != nil {
 		return err
 	}

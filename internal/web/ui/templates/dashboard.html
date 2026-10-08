@@ -17,32 +17,34 @@
 <div class="panel">
   <h2>最近投递</h2>
   {{if .Recent}}
-  <table>
-    <thead>
-      <tr>
-        <th class="nowrap">时间</th>
-        <th>规则</th>
-        <th>接收源</th>
-        <th>目标源</th>
-        <th class="nowrap">状态</th>
-        <th class="nowrap">响应</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Recent}}
-      <tr>
-        <td class="nowrap mono">{{ts .CreatedAt}}</td>
-        <td>{{.RuleName}}</td>
-        <td>{{.InSourceName}}</td>
-        <td>{{.OutSourceName}}</td>
-        <td><span class="tag {{.Status}}">{{statusText .Status}}</span></td>
-        <td class="nowrap mono">{{if .ResponseCode}}{{.ResponseCode}}{{else}}—{{end}}</td>
-        <td><a href="/deliveries/{{.ID}}">详情</a></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th class="nowrap">时间</th>
+          <th>规则</th>
+          <th>接收源</th>
+          <th>目标源</th>
+          <th class="nowrap">状态</th>
+          <th class="nowrap">响应</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Recent}}
+        <tr>
+          <td class="nowrap mono">{{ts .CreatedAt}}</td>
+          <td>{{.RuleName}}</td>
+          <td>{{.InSourceName}}</td>
+          <td>{{.OutSourceName}}</td>
+          <td><span class="tag {{.Status}}">{{statusText .Status}}</span></td>
+          <td class="nowrap mono">{{if .ResponseCode}}{{.ResponseCode}}{{else}}—{{end}}</td>
+          <td><a href="/deliveries/{{.ID}}">详情</a></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
   {{else}}
   <div class="empty">还没有投递记录。先到「源」里建一个接收源，再到「规则」里配置转发。</div>
   {{end}}

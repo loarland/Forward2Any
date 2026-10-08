@@ -46,6 +46,11 @@ type Server struct {
 	// 每个请求都要判一次直连地址，同样不能每次查库。
 	trustedProxies atomic.Value
 
+	// version 是编译时注入的版本号（发布版形如 1.0.14，main 构建是 sha-xxxxxxx，
+	// 本地直接编译是 dev）。只在顶栏显示，用来对着 Release / 日志排查，
+	// 启动后就固定，不存在并发写。
+	version string
+
 	// Turnstile：turnstileOff 是 F2A_TURNSTILE=off 的救命开关，
 	// turnstileURL 是服务端校验地址（默认官方，可用环境变量指到自建中转）。
 	// 这两个在 New 里读一次，改环境变量要重启才生效。
@@ -68,12 +73,14 @@ type Server struct {
 	port int
 }
 
-func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.Poller) *Server {
+// New 建一个后台服务。version 是编译时注入的版本号，只用于顶栏展示。
+func New(st *store.Store, log *slog.Logger, eng *engine.Engine, poller *mailin.Poller, version string) *Server {
 	s := &Server{
 		store:    st,
 		log:      log,
 		engine:   eng,
 		mailin:   poller,
+		version:  version,
 		sessions: newSessionStore(),
 		limiter:  newLoginLimiter(),
 		// 这两个只在启动时读一次：改环境变量要重启进程才生效。
@@ -299,6 +306,20 @@ var flashMessages = map[string]string{
 	"must_change_password": "你仍在使用默认密码，请先修改后再使用其它功能",
 }
 
+// versionLabel 给顶栏显示的版本号补上 v 前缀。
+//
+// 发布版是纯数字（1.0.14），加个 v 才像版本号；main 构建是 sha-xxxxxxx、
+// 本地直接编译是 dev，这两种原样显示，硬加 v 反而看不懂。
+func versionLabel(v string) string {
+	if v == "" {
+		return "dev"
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		return "v" + v
+	}
+	return v
+}
+
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
 	if data == nil {
 		data = map[string]any{}
@@ -324,6 +345,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 		theme := s.themeChoice()
 		data["ThemeColor"] = theme.Color
 		data["ThemeMode"] = theme.Mode
+	}
+	// 顶栏品牌名旁边的版本号，同样是全站统一，在这里注入一次。
+	if _, ok := data["Version"]; !ok {
+		data["Version"] = versionLabel(s.version)
 	}
 
 	// 先渲染到内存：模板出错时还能干净地返回 500，而不是半截 HTML。

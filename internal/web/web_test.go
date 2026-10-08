@@ -1045,6 +1045,51 @@ func TestRenderWritesExplicitThemeMode(t *testing.T) {
 	}
 }
 
+// 顶栏要能看出「跑的是哪一版」并直接跳到仓库 —— 排查问题时这两样最常要对着看。
+//
+// 顶栏只在有 Nav 时渲染，login 页自己没有 Nav，所以这里显式塞一个，
+// 借它把 layout 的顶栏跑出来（不用去凑 dashboard 那堆统计数据）。
+func TestTopbarShowsVersionAndRepoLink(t *testing.T) {
+	cases := []struct {
+		version string
+		want    string
+	}{
+		{"1.0.14", "v1.0.14"},          // 发布版：纯数字，补 v 前缀
+		{"sha-a4c8a75", "sha-a4c8a75"}, // main 分支构建：原样显示
+		{"", "dev"},                    // 本地直接编译：也不能是空白
+	}
+	for _, c := range cases {
+		s := testServer()
+		s.version = c.version
+		rec := httptest.NewRecorder()
+		s.render(rec, httptest.NewRequest("GET", "/", nil), "login",
+			map[string]any{"Nav": "dashboard", "S": &store.Settings{}})
+		body := rec.Body.String()
+
+		if !strings.Contains(body, `class="ver"`) || !strings.Contains(body, ">"+c.want+"<") {
+			t.Errorf("版本 %q 应当在顶栏显示成 %q，实际页面里没有", c.version, c.want)
+		}
+		if !strings.Contains(body, `href="https://github.com/loarland/Forward2Any"`) {
+			t.Errorf("版本 %q：顶栏没有 GitHub 入口", c.version)
+		}
+		// 新窗口打开的链接必须带 noopener，否则被指向的页面能通过 window.opener 改本页。
+		if !strings.Contains(body, `rel="noopener noreferrer"`) {
+			t.Errorf("版本 %q：GitHub 入口缺 rel=noopener noreferrer", c.version)
+		}
+	}
+}
+
+// 没有 Nav 的页面（登录页）不该出现顶栏，也就不该出现版本号。
+func TestLoginPageHasNoTopbar(t *testing.T) {
+	s := testServer()
+	s.version = "1.0.14"
+	rec := httptest.NewRecorder()
+	s.render(rec, httptest.NewRequest("GET", "/login", nil), "login", nil)
+	if strings.Contains(rec.Body.String(), `class="ver"`) {
+		t.Error("登录页不该渲染顶栏的版本号")
+	}
+}
+
 // 库里存了非法值时不能把它拼进 href，回落到默认。
 func TestRefreshThemeFallsBackOnGarbage(t *testing.T) {
 	st, err := store.Open(t.TempDir())
